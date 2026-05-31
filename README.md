@@ -1,49 +1,53 @@
-# dao - devin-remote
+# dao-remote
 
-> One line to remote PowerShell control
+> GitHub Issues = transparent transport pipe
+> 抛绣还是那个抛绣，只是路由变了
 
-## Architecture - GitHub is the hub
+Remote command execution via GitHub Issues. Devin AI sends commands, user PC executes them. The pipe is invisible to both ends.
+
+## Architecture
 
 ```
-GitHub (hub - permanent)
-  Issues = command queue
-    open  = pending
-    closed = done
-    comment = result
-  agent.ps1
-  _Devin.md
+Devin AI              GitHub (pipe)              User PC
+dao-exec "cmd"  →  Issue created     →  agent.ps1 polls
+                 ←  Comment posted    ←  executes, posts result
+stdout = result  ←  Issue closed     ←
 ```
 
-No cloudflared, no hub.js, no Node.js, no WebSocket. GitHub Issues is the natural bidirectional command queue.
+## Two ends, one pipe
 
-## Usage
+| End | File | Role |
+|-----|------|------|
+| Devin VM (Linux) | `dao-exec.sh` | Transparent sender — feels like local execution |
+| User PC (Windows) | `agent.ps1` | Transparent receiver — auto-auth, zero config |
+| Windows (testing) | `dao-exec.ps1` | Same, for local testing |
 
-### 1. Fork this repo
+## Setup
 
-### 2. User PC (one command)
+### 1. User PC (one command)
 
 ```powershell
 irm https://raw.githubusercontent.com/{user}/devin-remote/main/agent.ps1 | iex
 ```
 
-Enter repo name + PAT (needs `repo` scope).
+Auto-auth chain: gh CLI → env vars → git-credentials → Device Flow (one-time, auto-saved).
 
-### 3. Devin AI controls
+### 2. Devin AI (one command)
 
 ```bash
-gh issue create --repo {user}/devin-remote --label devin-cmd --body "dir C:\\Users"
-gh issue view {number} --repo {user}/devin-remote --comments
+dao-exec "hostname"
 ```
 
-## dao
+That's it. Output appears in stdout.
 
-> The way is to subtract, subtract and subtract again, until鏃犱负, and鏃犱负鑰屾棤涓嶄负.
+### 3. Fork for other users
 
-hub.js - eliminated (GitHub API replaces)
-setup.sh - eliminated (no Devin VM deployment needed)
-cloudflared - eliminated (GitHub is public)
-WebSocket - eliminated (Issues polling replaces)
-Node.js - eliminated (pure PowerShell)
-Ed25519 - eliminated (GitHub native auth)
+Fork this repo → set `DAO_REPO=yourname/devin-remote` → done.
 
-Only the essence remains: **PowerShell + GitHub Issues + remote command execution**.
+## Philosophy
+
+- **Transport layer, not system** — GitHub Issues is a pipe, not an application
+- **Transparent** — neither end knows the pipe exists
+- **dao-exec is a water tap** — turn it on, water flows through the pipe and back
+- **agent.ps1 is a drain** — receives water, processes it, sends it back
+- **无为无以为** — the pipe does nothing itself; it only carries
