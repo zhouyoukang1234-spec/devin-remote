@@ -11,20 +11,25 @@ LABEL="devin-cmd"
 
 [ $# -eq 0 ] && { echo "Usage: dao-exec \"command\"" >&2; exit 1; }
 
-# Send: create Issue = push command into pipe
+# ── Send: create Issue = push command into pipe ──
 num=$(gh issue create --repo "$REPO" --label "$LABEL" --title "cmd" --body "$*" 2>/dev/null | grep -oE '[0-9]+$')
-[ -z "$num" ] && { echo "dao: send failed (gh auth ok? repo exists?)" >&2; exit 1; }
+if [ -z "$num" ]; then
+  echo "dao: send failed — check: gh auth status && repo $REPO exists" >&2
+  exit 1
+fi
 
-# Receive: poll until closed = result came back through pipe
-for i in $(seq 1 $((TIMEOUT/3))); do
+# ── Receive: poll until closed = result came back ──
+deadline=$(( SECONDS + TIMEOUT ))
+while [ $SECONDS -lt $deadline ]; do
   state=$(gh issue view "$num" --repo "$REPO" --json state -q .state 2>/dev/null)
-  [ "$state" = "CLOSED" ] && {
-    # Extract output from code block in comment
-    gh issue view "$num" --repo "$REPO" --comments --json comments -q '.comments[-1].body' 2>/dev/null \
-      | awk '/^```$/{n++;next} n==1{print}'
+  if [ "$state" = "CLOSED" ]; then
+    # Extract output from code block in last comment
+    gh issue view "$num" --repo "$REPO" --comments --json comments \
+      -q '.comments[-1].body' 2>/dev/null \
+      | sed -n '/^```$/,/^```$/ { /^```$/d; p; }'
     exit 0
-  }
+  fi
   sleep 3
 done
-echo "dao: timeout ${TIMEOUT}s — agent.ps1 running on user PC?" >&2
+echo "dao: timeout ${TIMEOUT}s — is agent.ps1 running on user PC?" >&2
 exit 1

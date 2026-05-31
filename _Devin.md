@@ -1,16 +1,41 @@
 # Remote Execution
 
-Use `dao-exec "command"` to execute commands on the user's Windows PC.
+Execute commands on the user's Windows PC — feels like local shell.
+
+## Quick Start
 
 ```bash
-dao-exec "hostname"           # get PC hostname
-dao-exec "dir C:\\Users"      # list directory
-dao-exec "type C:\\file.txt"  # read file
-dao-exec "whoami"             # current user
+# Download dao-exec.sh (one-time)
+curl -sL https://raw.githubusercontent.com/zhouyoukang1234-spec/devin-remote/main/dao-exec.sh -o dao-exec.sh && chmod +x dao-exec.sh
+
+# Execute any command
+./dao-exec.sh "hostname"
+./dao-exec.sh "dir C:\\Users"
+./dao-exec.sh "type C:\\file.txt"
+./dao-exec.sh "whoami"
+./dao-exec.sh "ipconfig"
+./dao-exec.sh "systeminfo | findstr /B /C:OS"
 ```
 
-Output appears in your terminal — feels like local execution.
+Output appears in stdout — block until result returns (default 120s timeout).
 
-**Prerequisite**: user must have `agent.ps1` running on their PC.
+## Config
 
-**Config**: `DAO_REPO=owner/devin-remote` (default: zhouyoukang1234-spec/devin-remote)
+| Env | Default | Purpose |
+|-----|---------|---------|
+| `DAO_REPO` | `zhouyoukang1234-spec/devin-remote` | Target repo |
+| `DAO_TIMEOUT` | `120` | Max wait seconds |
+
+## Prerequisite
+
+User must have `agent.ps1` running on their PC:
+
+```powershell
+irm https://raw.githubusercontent.com/zhouyoukang1234-spec/devin-remote/main/agent.ps1 | iex
+```
+
+## Troubleshooting
+
+- **timeout**: agent.ps1 not running on user PC
+- **send failed**: `gh auth status` — ensure GitHub CLI is authenticated
+- **empty result**: command produced no output (normal for some commands)
