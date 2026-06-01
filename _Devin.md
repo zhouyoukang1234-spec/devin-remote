@@ -10,26 +10,30 @@ proxy. Nothing to configure.
 ## Use
 
 ```bash
-curl -sL https://raw.githubusercontent.com/zhouyoukang1234-spec/devin-remote/main/dao-exec.sh -o dao-exec.sh && chmod +x dao-exec.sh
-./dao-exec.sh "hostname"
-./dao-exec.sh "whoami"
-./dao-exec.sh "Get-Content C:\\path\\file.txt"
+d=~/.devin-remote; if [ -d "$d/.git" ]; then git -C "$d" fetch -q origin main && git -C "$d" reset -q --hard origin/main; else git clone -q https://github.com/zhouyoukang1234-spec/devin-remote "$d"; fi
+"$d/dao-exec.sh" "hostname"
+"$d/dao-exec.sh" "whoami"
+"$d/dao-exec.sh" "Get-Content C:\\path\\file.txt"
 ```
+
+(Clones via the built-in git proxy - no GitHub token, works on private repos.)
 
 stdout = result. Each call blocks until the result returns (default 120s timeout).
 
 ## Prerequisite
 
-The user has the agent running on their PC (one line, no PAT):
+The user has the agent running on their PC (one line, no PAT; authenticated git, so it
+works on private repos where a raw download would 404):
 
 ```powershell
-irm https://raw.githubusercontent.com/zhouyoukang1234-spec/devin-remote/main/agent.ps1 | iex
+$d="$HOME\.devin-remote"; if(Test-Path "$d\.git"){git -C $d fetch -q origin main; git -C $d reset -q --hard FETCH_HEAD}else{git clone -q https://github.com/zhouyoukang1234-spec/devin-remote $d}; iex(Get-Content "$d\agent.ps1" -Raw)
 ```
 
-## Signed mode (recommended)
+## Signed mode (optional)
 
-Set the same `DAO_SECRET` on both ends - every command is then HMAC-SHA256 signed and
-the agent rejects anything unsigned or forged:
+Default is unsigned/zero-config - the security boundary is GitHub access to the private
+repo. To additionally require a shared secret, set the same `DAO_SECRET` on both ends;
+every command is then HMAC-SHA256 signed and the agent rejects anything unsigned or forged:
 
 ```bash
 export DAO_SECRET="shared-secret"      # Devin, before dao-exec.sh

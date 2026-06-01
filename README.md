@@ -30,7 +30,7 @@ Devin AI (dao-exec.sh)        GitHub: branch dao-pipe          User PC (agent.ps
 | `res/<id>` | agent | `dao1-result <True\|False> <ms>` + newline + `base64(output)` |
 
 - **base64**, not markdown - output with quotes, CRLF, ``` ``` ```` or unicode round-trips byte-exact.
-- **HMAC-SHA256** signing (opt-in via `DAO_SECRET`) - the agent refuses commands without a valid signature.
+- **HMAC-SHA256** signing (opt-in via `DAO_SECRET`) - the agent refuses commands without a valid signature. Default is unsigned/zero-config: the security boundary is simply GitHub access to the private repo (only the account owner can read or write the pipe).
 - `<id>` = `<unix-ms>-<rand>`: sortable, and lets the agent skip commands created before it booted.
 
 ## Files
@@ -44,31 +44,30 @@ Devin AI (dao-exec.sh)        GitHub: branch dao-pipe          User PC (agent.ps
 
 ## Setup
 
-**1. User PC - one line** (uses the machine's existing git access to the fork):
+Both sides fetch over **authenticated git**, not anonymous HTTP - so it works on **private**
+repos with nothing but the GitHub access each side already has (a raw
+`https://raw.githubusercontent.com/...` download would 404 on a private repo).
+
+**1. User PC - one line** (uses the machine's existing git access; clones to `~/.devin-remote`,
+self-updates on each run, then starts the agent):
 
 ```powershell
-irm https://raw.githubusercontent.com/zhouyoukang1234-spec/devin-remote/main/agent.ps1 | iex
-```
-
-Signed mode (recommended): set the shared secret first.
-
-```powershell
-$env:DAO_SECRET = "your-shared-secret"
-irm https://raw.githubusercontent.com/zhouyoukang1234-spec/devin-remote/main/agent.ps1 | iex
+$d="$HOME\.devin-remote"; if(Test-Path "$d\.git"){git -C $d fetch -q origin main; git -C $d reset -q --hard FETCH_HEAD}else{git clone -q https://github.com/zhouyoukang1234-spec/devin-remote $d}; iex(Get-Content "$d\agent.ps1" -Raw)
 ```
 
 Runs on Windows PowerShell 5.1 (Desktop) and PowerShell 7+ (Core). Needs Git for Windows
 on `PATH`. If the machine has no git credentials yet, Git's own helper prompts a one-time
-browser sign-in - no hand-made PAT.
+browser sign-in - no hand-made PAT. Optional signed mode: `$env:DAO_SECRET="shared-secret"`
+before the line above (set the same on the Devin side).
 
-**2. Devin AI - one command:**
+**2. Devin AI - one command** (clones via the built-in git proxy, self-updates, then sends):
 
 ```bash
-curl -sL https://raw.githubusercontent.com/zhouyoukang1234-spec/devin-remote/main/dao-exec.sh -o dao-exec.sh && chmod +x dao-exec.sh
-./dao-exec.sh "hostname"
+d=~/.devin-remote; if [ -d "$d/.git" ]; then git -C "$d" fetch -q origin main && git -C "$d" reset -q --hard origin/main; else git clone -q https://github.com/zhouyoukang1234-spec/devin-remote "$d"; fi; "$d/dao-exec.sh" "hostname"
 ```
 
-**3. Other users:** fork this repo, then set `DAO_REPO=yourname/devin-remote` on both ends.
+**3. Other users:** fork this repo, then set `DAO_REPO=yourname/devin-remote` on both ends
+(and the repo URL in the two commands above).
 
 ## Config
 
