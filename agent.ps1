@@ -47,23 +47,21 @@ function Write-Result([string]$id, [int]$code, [string]$output) {
   for ($i = 0; $i -lt 6; $i++) {
     if ((Invoke-Git push -q origin "HEAD:$Pipe") -eq 0) { return $true }
     if ((Invoke-Git fetch -q origin $Pipe) -ne 0) { return $false }
-    if ((Invoke-Git rebase -q "origin/$Pipe") -ne 0) { Invoke-Git rebase --abort | Out-Null; return $false }
+    if ((Invoke-Git rebase -q FETCH_HEAD) -ne 0) { Invoke-Git rebase --abort | Out-Null; return $false }
   }
   return $false
 }
 
-# local working clone of just the pipe branch
-if (-not (Test-Path (Join-Path $work ".git"))) {
-  New-Item -ItemType Directory -Force -Path $work | Out-Null
-  Invoke-Git init -q | Out-Null
-  Invoke-Git remote add origin $Remote | Out-Null
-}
-Invoke-Git remote set-url origin $Remote | Out-Null
+# local working clone (always start fresh so stale state from a previous run cannot break fetch/reset)
+if (Test-Path $work) { Remove-Item -Recurse -Force $work }
+New-Item -ItemType Directory -Force -Path $work | Out-Null
+Invoke-Git init -q | Out-Null
+Invoke-Git remote add origin $Remote | Out-Null
 
 # baseline (clock-free): snapshot the commands that already exist right now, and ignore them.
 $baseline = @{}
 if ((Invoke-Git fetch -q origin $Pipe) -eq 0) {
-  Invoke-Git reset -q --hard "origin/$Pipe" | Out-Null
+  Invoke-Git reset -q --hard FETCH_HEAD | Out-Null
   $cmdDir = Join-Path $work "cmd"
   if (Test-Path $cmdDir) { foreach ($f in Get-ChildItem $cmdDir -File) { $baseline[$f.Name] = 1 } }
 }
@@ -73,7 +71,7 @@ $seen = @{}
 while ($true) {
   try {
     if ((Invoke-Git fetch -q origin $Pipe) -ne 0) { Start-Sleep $Poll; continue }  # branch may not exist yet
-    Invoke-Git reset -q --hard "origin/$Pipe" | Out-Null
+    Invoke-Git reset -q --hard FETCH_HEAD | Out-Null
     $cmdDir = Join-Path $work "cmd"
     if (Test-Path $cmdDir) {
       foreach ($f in Get-ChildItem $cmdDir -File | Sort-Object Name) {
