@@ -7,7 +7,7 @@ no real repo, token, or network. This is how it is validated in sandboxes where
 
 ## Requirements
 - `pwsh` (PowerShell 7+) **or** Windows PowerShell 5.1 (`powershell.exe`) - auto-detected
-- `git`, `openssl`, `base64` (no `python` needed)
+- `git`, `base64` (no `python` needed)
 
 On Git Bash for Windows it also uses `cygpath` (ships with Git for Windows) so bash-git
 and PowerShell-git agree on the bare repo path.
@@ -17,12 +17,11 @@ and PowerShell-git agree on the bare repo path.
 bash test/e2e.sh
 ```
 
-It inits a bare repo, seeds a pre-boot (stale) command, boots `agent.ps1`, drives
-commands through `dao-exec.sh`, and prints `PASS`/`FAIL` per case. Exit code = failures.
+It inits a bare repo, seeds a pre-boot command, boots `agent.ps1`, drives commands
+through `dao-exec.sh`, and prints `PASS`/`FAIL` per case. Exit code = failures.
 
 ## What it covers
-- basic round-trip (signed)
+- basic round-trip
 - multiline / unicode / shell-metacharacter output (base64 round-trip, byte-exact)
-- command failure -> non-zero exit + stderr
-- HMAC: a command signed with the wrong secret is rejected
-- stale-skip: a command seeded before the agent booted is never executed
+- command failure -> non-zero exit code propagates, output still returned
+- baseline skip: a command that existed before the agent booted is never executed
