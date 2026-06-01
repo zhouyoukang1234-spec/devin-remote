@@ -1,14 +1,18 @@
 <#
-dao-exec — transparent remote command execution (Windows)
+dao-exec - transparent remote command execution (Windows)
 GitHub Issues = invisible transport pipe
-Usage: dao-exec "command" → stdout = result (feels like local execution)
+Usage: dao-exec "command" -> stdout = result (feels like local execution)
 #>
 param([string]$Repo = "zhouyoukang1234-spec/devin-remote", [Parameter(Mandatory)][string]$Command, [string]$Secret = $env:DAO_SECRET, [string]$ApiBase = $env:DAO_API)
 $LABEL = "devin-cmd"
 if (-not $ApiBase) { $ApiBase = "https://api.github.com" }
 $ApiBase = $ApiBase.TrimEnd('/')
+# Emit results as UTF-8: Windows PowerShell 5.1 defaults [Console]::Out to the OEM
+# code page, which turns non-ASCII output (e.g. CJK) into '?'. Force UTF-8 (no BOM)
+# so the base64-decoded result reaches the caller byte-exact.
+try { [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding $false } catch {}
 
-# ── Add-Type: WinCred + HttpClient ──
+# -- Add-Type: WinCred + HttpClient --
 # PS 5.1 (Desktop) resolves WebProxy from System.dll; PS 7 (Core) needs explicit refs.
 $daoRefs = @('System.Net.Http')
 if ($PSVersionTable.PSEdition -eq 'Core') { $daoRefs += @('System.Net.Primitives', 'System.Net.WebProxy') }
@@ -51,7 +55,7 @@ public class DaoExec2 {
 }
 "@
 
-# ── Auto proxy ──
+# -- Auto proxy --
 $proxyUrl = ""
 $proxyEnv = $env:HTTPS_PROXY, $env:HTTP_PROXY | Where-Object { $_ } | Select-Object -First 1
 if ($proxyEnv) { $proxyUrl = $proxyEnv -replace '^https?://', 'http://' }
@@ -63,7 +67,7 @@ else {
 }
 [DaoExec2]::SetProxy($proxyUrl)
 
-# ── Auto token (same chain as agent.ps1) ──
+# -- Auto token (same chain as agent.ps1) --
 $Token = ""
 try { $t1 = [DaoCred2]::Get("git:https://github.com") } catch { $t1 = "" }
 try { $t2 = [DaoCred2]::Get("git:https://zhouyoukang@github.com") } catch { $t2 = "" }
@@ -74,9 +78,9 @@ if (-not $Token -and (Test-Path "$env:USERPROFILE\.git-credentials")) {
   $gc = Get-Content "$env:USERPROFILE\.git-credentials" -EA 0 | Where-Object { $_ -match 'github\.com' } | Select-Object -First 1
   if ($gc -match ':([^:@]+)@github') { $Token = $Matches[1] }
 }
-if (-not $Token) { Write-Host "dao: no token — set DAO_TOKEN env" -F Red; exit 1 }
+if (-not $Token) { Write-Host "dao: no token - set DAO_TOKEN env" -F Red; exit 1 }
 
-# ── Build signed envelope: "dao1 <b64cmd> <hmac|->" ──
+# -- Build signed envelope: "dao1 <b64cmd> <hmac|->" --
 $b64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($Command))
 if ($Secret) {
   $h = [System.Security.Cryptography.HMACSHA256]::new([Text.Encoding]::UTF8.GetBytes($Secret))
@@ -85,14 +89,14 @@ if ($Secret) {
 } else { $sig = '-' }
 $body = "dao1 $b64 $sig"
 
-# ── Send: create Issue ──
+# -- Send: create Issue --
 $issueJson = @{ title = "cmd"; body = $body; labels = @($LABEL) } | ConvertTo-Json -Compress
 $result = [DaoExec2]::Post($Token, "$ApiBase/repos/$Repo/issues", $issueJson)
 if ($result -match '"number":(\d+)') { $num = $Matches[1] }
 else { [Console]::Error.WriteLine("dao: send failed (auth ok? repo exists?)"); exit 1 }
 [Console]::Error.WriteLine("[dao] #$num sent: $Command")
 
-# ── Receive: poll until closed ──
+# -- Receive: poll until closed --
 for ($i = 0; $i -lt 40; $i++) {
   Start-Sleep 3
   $issue = [DaoExec2]::Get($Token, "$ApiBase/repos/$Repo/issues/$num")
@@ -117,4 +121,4 @@ for ($i = 0; $i -lt 40; $i++) {
     exit 0
   }
 }
-[Console]::Error.WriteLine("dao: timeout 120s — agent.ps1 running on user PC?"); exit 1
+[Console]::Error.WriteLine("dao: timeout 120s - agent.ps1 running on user PC?"); exit 1

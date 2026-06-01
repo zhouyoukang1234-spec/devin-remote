@@ -6,8 +6,12 @@ exercised offline — no real GitHub repo, token, or network required. This is h
 the pipe is validated in sandboxes where `api.github.com` is unreachable.
 
 ## Requirements
-- `pwsh` (PowerShell 7+)
-- `python3`, `openssl`, `base64`
+- `pwsh` (PowerShell 7+) **or** Windows PowerShell 5.1 (`powershell.exe`) — the
+  harness auto-detects whichever is on `PATH`
+- `python3` **or** `python`, plus `openssl`, `base64`, `curl`
+
+On Git Bash for Windows the harness also needs `cygpath` (ships with Git for
+Windows) so it can hand PowerShell native `C:\...` paths instead of MSYS `/c/...`.
 
 ## Run
 ```bash
