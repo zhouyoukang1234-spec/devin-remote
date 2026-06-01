@@ -25,6 +25,9 @@ Output appears in stdout — block until result returns (default 120s timeout).
 |-----|---------|---------|
 | `DAO_REPO` | `zhouyoukang1234-spec/devin-remote` | Target repo |
 | `DAO_TIMEOUT` | `120` | Max wait seconds |
+| `DAO_SECRET` | _(unset)_ | HMAC-SHA256 key — must match `agent.ps1` or the command is rejected |
+
+When `DAO_SECRET` is set, `dao-exec` signs each command and the agent runs it only if the signature is valid. Leave it unset for zero-config (unsigned) use.
 
 ## Prerequisite
 
@@ -39,3 +42,5 @@ irm https://raw.githubusercontent.com/zhouyoukang1234-spec/devin-remote/main/age
 - **timeout**: agent.ps1 not running on user PC
 - **send failed**: `gh auth status` — ensure GitHub CLI is authenticated
 - **empty result**: command produced no output (normal for some commands)
+- **rejected: invalid/missing signature**: `DAO_SECRET` differs between sender and agent (or set on only one end)
+- **skipped: stale command**: agent (re)started after the command was sent — just resend

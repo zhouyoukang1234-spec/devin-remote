@@ -3,7 +3,7 @@ dao-exec — transparent remote command execution (Windows)
 GitHub Issues = invisible transport pipe
 Usage: dao-exec "command" → stdout = result (feels like local execution)
 #>
-param([string]$Repo = "zhouyoukang1234-spec/devin-remote", [Parameter(Mandatory)][string]$Command)
+param([string]$Repo = "zhouyoukang1234-spec/devin-remote", [Parameter(Mandatory)][string]$Command, [string]$Secret = $env:DAO_SECRET)
 $LABEL = "devin-cmd"
 
 # ── Add-Type: WinCred + HttpClient ──
@@ -71,8 +71,17 @@ if (-not $Token -and (Test-Path "$env:USERPROFILE\.git-credentials")) {
 }
 if (-not $Token) { Write-Host "dao: no token — set DAO_TOKEN env" -F Red; exit 1 }
 
+# ── Build signed envelope: "dao1 <b64cmd> <hmac|->" ──
+$b64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($Command))
+if ($Secret) {
+  $h = [System.Security.Cryptography.HMACSHA256]::new([Text.Encoding]::UTF8.GetBytes($Secret))
+  try { $sig = (($h.ComputeHash([Text.Encoding]::UTF8.GetBytes($b64)) | ForEach-Object { $_.ToString('x2') }) -join '') }
+  finally { $h.Dispose() }
+} else { $sig = '-' }
+$body = "dao1 $b64 $sig"
+
 # ── Send: create Issue ──
-$issueJson = @{ title = "cmd"; body = $Command; labels = @($LABEL) } | ConvertTo-Json -Compress
+$issueJson = @{ title = "cmd"; body = $body; labels = @($LABEL) } | ConvertTo-Json -Compress
 $result = [DaoExec2]::Post($Token, "https://api.github.com/repos/$Repo/issues", $issueJson)
 if ($result -match '"number":(\d+)') { $num = $Matches[1] }
 else { Write-Host "dao: send failed (auth ok? repo exists?)" -F Red; exit 1 }
@@ -84,17 +93,21 @@ for ($i = 0; $i -lt 40; $i++) {
   $issue = [DaoExec2]::Get($Token, "https://api.github.com/repos/$Repo/issues/$num")
   if ($issue -match '"state":"closed"') {
     $comments = [DaoExec2]::Get($Token, "https://api.github.com/repos/$Repo/issues/$num/comments")
-    $cMatches = [regex]::Matches($comments, '"body":"([^"]*)"')
-    if ($cMatches.Count -gt 0) {
-      $body = $cMatches[$cMatches.Count - 1].Groups[1].Value
-      $body = $body -replace '\\n', "`n" -replace '\\r', "`r" -replace '\\"', '"' -replace '\\t', "`t"
-      # Extract output from code block
-      $inBlock = $false; $output = @()
-      foreach ($line in $body -split "`n") {
-        if ($line -eq '```') { $inBlock = -not $inBlock; continue }
-        if ($inBlock) { $output += $line }
+    $arr = $comments | ConvertFrom-Json
+    if ($arr.Count -gt 0) {
+      $cbody = ($arr[$arr.Count - 1].body -replace '\r', '')
+      $lines = $cbody -split "`n"
+      if ($lines[0] -like 'dao1-result*') {
+        $status = ($lines[0] -split '\s+')[1]
+        $out = if ($lines.Count -ge 2) { [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($lines[1].Trim())) } else { '' }
+        if ($status -eq 'False') { Write-Host $out -F Red; exit 1 }
+        $out
+      } else {
+        # Fallback for legacy markdown-fence results
+        $inBlock = $false; $output = @()
+        foreach ($line in $lines) { if ($line -eq '```') { $inBlock = -not $inBlock; continue }; if ($inBlock) { $output += $line } }
+        if ($output.Count -gt 0) { $output -join "`n" } else { $cbody }
       }
-      if ($output.Count -gt 0) { $output -join "`n" } else { Write-Host $body }
     }
     exit 0
   }
