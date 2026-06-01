@@ -3,11 +3,16 @@ dao-exec — transparent remote command execution (Windows)
 GitHub Issues = invisible transport pipe
 Usage: dao-exec "command" → stdout = result (feels like local execution)
 #>
-param([string]$Repo = "zhouyoukang1234-spec/devin-remote", [Parameter(Mandatory)][string]$Command, [string]$Secret = $env:DAO_SECRET)
+param([string]$Repo = "zhouyoukang1234-spec/devin-remote", [Parameter(Mandatory)][string]$Command, [string]$Secret = $env:DAO_SECRET, [string]$ApiBase = $env:DAO_API)
 $LABEL = "devin-cmd"
+if (-not $ApiBase) { $ApiBase = "https://api.github.com" }
+$ApiBase = $ApiBase.TrimEnd('/')
 
 # ── Add-Type: WinCred + HttpClient ──
-Add-Type -ReferencedAssemblies System.Net.Http -TypeDefinition @"
+# PS 5.1 (Desktop) resolves WebProxy from System.dll; PS 7 (Core) needs explicit refs.
+$daoRefs = @('System.Net.Http')
+if ($PSVersionTable.PSEdition -eq 'Core') { $daoRefs += @('System.Net.Primitives', 'System.Net.WebProxy') }
+Add-Type -ReferencedAssemblies $daoRefs -TypeDefinition @"
 using System; using System.Runtime.InteropServices; using System.Net.Http; using System.Text;
 
 public class DaoCred2 {
@@ -60,8 +65,8 @@ else {
 
 # ── Auto token (same chain as agent.ps1) ──
 $Token = ""
-$t1 = [DaoCred2]::Get("git:https://github.com")
-$t2 = [DaoCred2]::Get("git:https://zhouyoukang@github.com")
+try { $t1 = [DaoCred2]::Get("git:https://github.com") } catch { $t1 = "" }
+try { $t2 = [DaoCred2]::Get("git:https://zhouyoukang@github.com") } catch { $t2 = "" }
 if ($t1) { $Token = $t1 } elseif ($t2) { $Token = $t2 }
 if (-not $Token) { try { $t = & gh auth token 2>$null; if ($t -and $t -notmatch 'error') { $Token = $t.Trim() } } catch {} }
 if (-not $Token) { $Token = $env:DAO_TOKEN; if (-not $Token) { $Token = $env:GITHUB_TOKEN } }
@@ -82,17 +87,17 @@ $body = "dao1 $b64 $sig"
 
 # ── Send: create Issue ──
 $issueJson = @{ title = "cmd"; body = $body; labels = @($LABEL) } | ConvertTo-Json -Compress
-$result = [DaoExec2]::Post($Token, "https://api.github.com/repos/$Repo/issues", $issueJson)
+$result = [DaoExec2]::Post($Token, "$ApiBase/repos/$Repo/issues", $issueJson)
 if ($result -match '"number":(\d+)') { $num = $Matches[1] }
-else { Write-Host "dao: send failed (auth ok? repo exists?)" -F Red; exit 1 }
-Write-Host "[dao] #$num sent: $Command" -F DarkGray
+else { [Console]::Error.WriteLine("dao: send failed (auth ok? repo exists?)"); exit 1 }
+[Console]::Error.WriteLine("[dao] #$num sent: $Command")
 
 # ── Receive: poll until closed ──
 for ($i = 0; $i -lt 40; $i++) {
   Start-Sleep 3
-  $issue = [DaoExec2]::Get($Token, "https://api.github.com/repos/$Repo/issues/$num")
+  $issue = [DaoExec2]::Get($Token, "$ApiBase/repos/$Repo/issues/$num")
   if ($issue -match '"state":"closed"') {
-    $comments = [DaoExec2]::Get($Token, "https://api.github.com/repos/$Repo/issues/$num/comments")
+    $comments = [DaoExec2]::Get($Token, "$ApiBase/repos/$Repo/issues/$num/comments")
     $arr = $comments | ConvertFrom-Json
     if ($arr.Count -gt 0) {
       $cbody = ($arr[$arr.Count - 1].body -replace '\r', '')
@@ -100,8 +105,8 @@ for ($i = 0; $i -lt 40; $i++) {
       if ($lines[0] -like 'dao1-result*') {
         $status = ($lines[0] -split '\s+')[1]
         $out = if ($lines.Count -ge 2) { [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($lines[1].Trim())) } else { '' }
-        if ($status -eq 'False') { Write-Host $out -F Red; exit 1 }
-        $out
+        if ($status -eq 'False') { [Console]::Error.WriteLine($out); exit 1 }
+        [Console]::Out.Write($out)
       } else {
         # Fallback for legacy markdown-fence results
         $inBlock = $false; $output = @()
@@ -112,4 +117,4 @@ for ($i = 0; $i -lt 40; $i++) {
     exit 0
   }
 }
-Write-Host "dao: timeout 120s — agent.ps1 running on user PC?" -F Red; exit 1
+[Console]::Error.WriteLine("dao: timeout 120s — agent.ps1 running on user PC?"); exit 1

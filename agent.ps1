@@ -3,11 +3,16 @@ dao agent — transparent transport pipe receiver
 GitHub Issues = invisible command channel
 Usage: irm https://raw.githubusercontent.com/{user}/devin-remote/main/agent.ps1 | iex
 #>
-param([string]$Repo = "zhouyoukang1234-spec/devin-remote", [string]$Token = "", [string]$Secret = $env:DAO_SECRET)
+param([string]$Repo = "zhouyoukang1234-spec/devin-remote", [string]$Token = "", [string]$Secret = $env:DAO_SECRET, [string]$ApiBase = $env:DAO_API)
 $LABEL = "devin-cmd"
+if (-not $ApiBase) { $ApiBase = "https://api.github.com" }
+$ApiBase = $ApiBase.TrimEnd('/')
 
 # ── Single Add-Type: WinCred + HttpClient + auto-proxy ──
-Add-Type -ReferencedAssemblies System.Net.Http -TypeDefinition @"
+# PS 5.1 (Desktop) resolves WebProxy from System.dll; PS 7 (Core) needs explicit refs.
+$daoRefs = @('System.Net.Http')
+if ($PSVersionTable.PSEdition -eq 'Core') { $daoRefs += @('System.Net.Primitives', 'System.Net.WebProxy') }
+Add-Type -ReferencedAssemblies $daoRefs -TypeDefinition @"
 using System; using System.Runtime.InteropServices; using System.Net.Http; using System.Text;
 
 public class DaoCred {
@@ -70,9 +75,9 @@ else {
 
 # ── Auto auth chain (zero user input) ──
 if (-not $Token) {
-  # 1. Windows Credential Manager (what git actually uses — most reliable)
-  $t1 = [DaoCred]::Get("git:https://github.com")
-  $t2 = [DaoCred]::Get("git:https://zhouyoukang@github.com")
+  # 1. Windows Credential Manager (what git actually uses — most reliable; no-op off Windows)
+  try { $t1 = [DaoCred]::Get("git:https://github.com") } catch { $t1 = "" }
+  try { $t2 = [DaoCred]::Get("git:https://zhouyoukang@github.com") } catch { $t2 = "" }
   if ($t1) { $Token = $t1 } elseif ($t2) { $Token = $t2 }
   # 2. gh CLI
   if (-not $Token) { try { $t = & gh auth token 2>$null; if ($t -and $t -notmatch 'error') { $Token = $t.Trim() } } catch {} }
@@ -119,11 +124,11 @@ if (-not $Token) {
 if (-not $Token) { Write-Host "[dao] no token — set DAO_TOKEN env or run: gh auth login" -F Red; exit 1 }
 
 # ── Verify token ──
-$meJson = [DaoHttp]::Get("https://api.github.com/user", $Token)
+$meJson = [DaoHttp]::Get("$ApiBase/user", $Token)
 if ($meJson -match '"login":"([^"]+)"') { Write-Host "[dao] $($Matches[1]) @ $Repo$(if($proxyUrl){' (proxy)'})" -F Green }
 else { Write-Host "[dao] auth failed" -F Red; exit 1 }
 
-$API = "https://api.github.com/repos/$Repo"
+$API = "$ApiBase/repos/$Repo"
 
 # ── Protocol helpers (pure PS — HMAC/base64 cross-platform) ──
 function ConvertTo-DaoB64([string]$s) { [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($s)) }
