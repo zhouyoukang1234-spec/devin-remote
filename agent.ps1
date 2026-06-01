@@ -1,54 +1,44 @@
 <#
-dao agent (git transport) - transparent transport pipe receiver
-A data-only orphan branch (default: dao-pipe) is the channel: the sender writes
-cmd/<id>, this agent executes it and writes res/<id>. Uses ONLY local git, so the
-user needs no GitHub API token - just git access to their own fork.
-Usage: irm https://raw.githubusercontent.com/{user}/devin-remote/main/agent.ps1 | iex
+dao agent - the user PC end of a transparent command pipe.
+
+GitHub is just the wire: a data-only branch (default: dao-pipe) carries the traffic.
+The sender writes cmd/<id> (base64 of a command); this agent runs it and writes
+res/<id> (exit code + base64 of the output). Plain git only - no GitHub API token,
+no PAT; it reuses the machine's own git access to the repo.
+
+  irm https://raw.githubusercontent.com/zhouyoukang1234-spec/devin-remote/main/agent.ps1 | iex
+
+Clock-free: at startup the agent remembers which commands already exist and ignores
+them; it then runs only commands that appear afterwards. No timestamps, so two
+machines' clocks can never disagree.
 #>
 param(
-  [string]$Repo   = "zhouyoukang1234-spec/devin-remote",
-  [string]$Secret = $env:DAO_SECRET,
-  [string]$Pipe   = $(if ($env:DAO_PIPE) { $env:DAO_PIPE } else { "dao-pipe" }),
+  [string]$Repo   = $(if ($env:DAO_REPO)   { $env:DAO_REPO }   else { "zhouyoukang1234-spec/devin-remote" }),
+  [string]$Pipe   = $(if ($env:DAO_PIPE)   { $env:DAO_PIPE }   else { "dao-pipe" }),
   [string]$Remote = $(if ($env:DAO_REMOTE) { $env:DAO_REMOTE } else { "" }),
-  [string]$Cache  = $(if ($env:DAO_CACHE) { $env:DAO_CACHE } else { "$env:USERPROFILE\.dao-pipe" })
+  [string]$Cache  = $(if ($env:DAO_CACHE)  { $env:DAO_CACHE }  else { "$env:USERPROFILE\.dao-pipe" }),
+  [int]   $Poll   = $(if ($env:DAO_POLL)   { [int]$env:DAO_POLL } else { 3 })
 )
 
-# Emit nothing non-ASCII to the OEM console unrendered; force UTF-8 so logs are clean.
 try { [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding $false } catch {}
 if (-not $Remote) { $Remote = "https://github.com/$Repo.git" }
 $git = (Get-Command git -EA 0).Source
 if (-not $git) { Write-Host "[dao] git not found on PATH - install Git for Windows" -F Red; exit 1 }
 $work = Join-Path $Cache ($Repo -replace '[/:]', '_')
 
-# -- git helper: pin identity + LF so the pipe is byte-stable; return ONLY the exit code
-# (git's own stdout/stderr is captured into $script:DaoGitOut, never leaked to the pipeline).
+# git wrapper: pin identity + LF so the pipe is byte-stable; return ONLY the exit code
+# (git's own output is captured, never leaked to the pipeline).
 function Invoke-Git { param([Parameter(ValueFromRemainingArguments=$true)][string[]]$Args)
   $script:DaoGitOut = & $git -C $work -c user.name=dao -c user.email=dao@pipe -c core.autocrlf=false @Args 2>&1
   return $LASTEXITCODE
 }
+function To-B64([string]$s)   { [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($s)) }
+function From-B64([string]$s) { [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($s)) }
 
-# -- Protocol helpers (pure PS - HMAC/base64 cross-platform) --
-function ConvertTo-DaoB64([string]$s) { [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($s)) }
-function ConvertFrom-DaoB64([string]$s) { [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($s)) }
-function Get-DaoHmac([string]$key, [string]$msg) {
-  $h = [System.Security.Cryptography.HMACSHA256]::new([Text.Encoding]::UTF8.GetBytes($key))
-  try { (($h.ComputeHash([Text.Encoding]::UTF8.GetBytes($msg)) | ForEach-Object { $_.ToString('x2') }) -join '') }
-  finally { $h.Dispose() }
-}
-function Test-DaoSig([string]$key, [string]$b64, [string]$sig) {
-  if (-not $key) { return $true }
-  if (-not $sig -or $sig -eq '-') { return $false }
-  $calc = Get-DaoHmac $key $b64
-  if ($calc.Length -ne $sig.Length) { return $false }
-  $diff = 0
-  for ($k = 0; $k -lt $calc.Length; $k++) { $diff = $diff -bor ([byte][char]$calc[$k] -bxor [byte][char]$sig[$k]) }
-  return ($diff -eq 0)
-}
-
-# -- Write res/<id> as UTF-8 (no BOM), commit, push (rebasing onto concurrent pushes) --
-function Write-DaoResult([string]$id, [string]$status, [long]$ms, [string]$output) {
+# write res/<id> = "<exit>\n<base64(output)>", commit, push (rebasing past concurrent pushes)
+function Write-Result([string]$id, [int]$code, [string]$output) {
   if ($output.Length -gt 60000) { $output = $output.Substring(0, 60000) + "`n[truncated]" }
-  $body = "dao1-result $status $ms`n" + (ConvertTo-DaoB64 $output) + "`n"
+  $body = "$code`n" + (To-B64 $output) + "`n"
   $resDir = Join-Path $work "res"
   if (-not (Test-Path $resDir)) { New-Item -ItemType Directory -Force -Path $resDir | Out-Null }
   [IO.File]::WriteAllText((Join-Path $resDir $id), $body, (New-Object System.Text.UTF8Encoding $false))
@@ -62,7 +52,7 @@ function Write-DaoResult([string]$id, [string]$status, [long]$ms, [string]$outpu
   return $false
 }
 
-# -- Local working clone of just the pipe branch --
+# local working clone of just the pipe branch
 if (-not (Test-Path (Join-Path $work ".git"))) {
   New-Item -ItemType Directory -Force -Path $work | Out-Null
   Invoke-Git init -q | Out-Null
@@ -70,49 +60,43 @@ if (-not (Test-Path (Join-Path $work ".git"))) {
 }
 Invoke-Git remote set-url origin $Remote | Out-Null
 
-$signed = [bool]$Secret
-if (-not $signed) { Write-Host "[dao] WARNING: unsigned mode - set DAO_SECRET on both ends to require HMAC" -F Yellow }
-Write-Host "[dao] git pipe active: $Repo @ $Pipe (signed=$signed) (Ctrl+C stop)" -F Cyan
+# baseline (clock-free): snapshot the commands that already exist right now, and ignore them.
+$baseline = @{}
+if ((Invoke-Git fetch -q origin $Pipe) -eq 0) {
+  Invoke-Git reset -q --hard "origin/$Pipe" | Out-Null
+  $cmdDir = Join-Path $work "cmd"
+  if (Test-Path $cmdDir) { foreach ($f in Get-ChildItem $cmdDir -File) { $baseline[$f.Name] = 1 } }
+}
+Write-Host "[dao] pipe active: $Repo @ $Pipe  (Ctrl+C to stop)" -F Cyan
 
-$bootMs = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds() - 5000
 $seen = @{}
 while ($true) {
   try {
-    if ((Invoke-Git fetch -q origin $Pipe) -ne 0) { Start-Sleep 5; continue }  # branch may not exist yet
+    if ((Invoke-Git fetch -q origin $Pipe) -ne 0) { Start-Sleep $Poll; continue }  # branch may not exist yet
     Invoke-Git reset -q --hard "origin/$Pipe" | Out-Null
     $cmdDir = Join-Path $work "cmd"
     if (Test-Path $cmdDir) {
       foreach ($f in Get-ChildItem $cmdDir -File | Sort-Object Name) {
         $id = $f.Name
-        if ($seen[$id]) { continue }
-        if (Test-Path (Join-Path $work "res/$id")) { $seen[$id] = 1; continue }  # already answered (idempotent)
-        $ms = 0L; [void][int64]::TryParse(($id -split '-')[0], [ref]$ms)
-        if ($ms -lt $bootMs) { $seen[$id] = 1; Write-Host "[dao] ~ skip stale $id" -F DarkGray; continue }
+        if ($baseline[$id] -or $seen[$id]) { continue }                                  # pre-existing or done this run
+        if (Test-Path (Join-Path $work "res/$id")) { $seen[$id] = 1; continue }           # already answered (idempotent)
         $seen[$id] = 1
 
-        $raw = (Get-Content $f.FullName -Raw) -replace '\r', ''
-        $parts = $raw.Trim() -split '\s+'
-        if ($parts.Count -lt 2 -or $parts[0] -ne 'dao1') {
-          Write-DaoResult $id "False" 0 "[dao] rejected: bad envelope (expected 'dao1 <b64> <sig>')" | Out-Null; continue
-        }
-        $b64 = $parts[1]; $sig = if ($parts.Count -ge 3) { $parts[2] } else { '-' }
-        if (-not (Test-DaoSig $Secret $b64 $sig)) {
-          Write-Host "[dao] ! signature rejected $id" -F Red
-          Write-DaoResult $id "False" 0 "[dao] rejected: invalid/missing signature" | Out-Null; continue
-        }
-        try { $cmd = ConvertFrom-DaoB64 $b64 } catch { Write-DaoResult $id "False" 0 "[dao] rejected: bad base64 payload" | Out-Null; continue }
+        $b64 = ((Get-Content $f.FullName -Raw) -replace '\s', '')
+        try { $cmd = From-B64 $b64 } catch { Write-Result $id 1 "[dao] bad base64 payload" | Out-Null; continue }
 
         Write-Host "[dao] > $cmd" -F Yellow
-        $sw = [Diagnostics.Stopwatch]::StartNew()
-        try { $out = Invoke-Expression $cmd 2>&1 | Out-String; $ok = "True" } catch { $out = $_.Exception.Message; $ok = "False" }
-        $sw.Stop()
-        if (Write-DaoResult $id $ok $sw.ElapsedMilliseconds $out) {
-          Write-Host "[dao] < $id done ($($sw.ElapsedMilliseconds)ms)" -F Green
-        } else {
-          Write-Host "[dao] ! push failed for $id (will not retry)" -F Red
-        }
+        $errBefore = $Error.Count; $global:LASTEXITCODE = 0
+        try {
+          $raw = Invoke-Expression $cmd 2>&1
+          $out = ($raw | Out-String)
+          # failure if the command raised an error or a native exe returned non-zero
+          $code = if (($Error.Count -gt $errBefore) -or ($LASTEXITCODE -ne 0)) { 1 } else { 0 }
+        } catch { $out = $_.Exception.Message; $code = 1 }
+        if (Write-Result $id $code $out) { Write-Host "[dao] < $id done" -F Green }
+        else { Write-Host "[dao] ! push failed for $id" -F Red }
       }
     }
   } catch {}
-  Start-Sleep 5
+  Start-Sleep $Poll
 }
