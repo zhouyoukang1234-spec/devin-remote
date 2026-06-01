@@ -1,9 +1,15 @@
 # Local end-to-end test harness
 
-Runs the **real** `agent.ps1` (receiver) and `dao-exec.ps1` (sender) against a
-local in-memory mock of the GitHub Issues API, so the full transport pipe can be
-exercised offline — no real GitHub repo, token, or network required. This is how
-the pipe is validated in sandboxes where `api.github.com` is unreachable.
+Two offline harnesses, one per transport. Neither touches the network — the full
+pipe is exercised with no real GitHub repo, token, or connectivity, which is how
+it is validated in sandboxes where `api.github.com` is unreachable.
+
+- `e2e.sh` — **Issues transport.** Runs the real `agent.ps1` (receiver) and
+  `dao-exec.ps1` (sender) against a local in-memory mock of the GitHub Issues API
+  (`mock_github.py`).
+- `e2e-git.sh` — **git transport.** Runs the real `agent-git.ps1` (receiver) and
+  `dao-git.sh` (sender) against a local **bare git repo** standing in for GitHub,
+  proving the `dao-pipe` branch protocol (`cmd/<id>` + `res/<id>`).
 
 ## Requirements
 - `pwsh` (PowerShell 7+) **or** Windows PowerShell 5.1 (`powershell.exe`) — the
@@ -15,12 +21,18 @@ Windows) so it can hand PowerShell native `C:\...` paths instead of MSYS `/c/...
 
 ## Run
 ```bash
-bash test/e2e.sh
+bash test/e2e.sh        # Issues transport (mock REST API)
+bash test/e2e-git.sh    # git transport (local bare repo)
 ```
 
-It starts `mock_github.py`, boots the agent (signed then unsigned), drives a
+`e2e.sh` starts `mock_github.py`, boots the agent (signed then unsigned), drives a
 battery of scenarios through `dao-exec.ps1`, and prints `PASS`/`FAIL` per case.
-Exit code = number of failures.
+`e2e-git.sh` inits a bare repo, seeds a pre-boot (stale) command, boots
+`agent-git.ps1`, and drives commands through `dao-git.sh`. Exit code = failures.
+
+`e2e-git.sh` covers: basic round-trip, multiline, unicode, failure→exit-1+stderr,
+wrong-signature rejection, shell metacharacters, and stale-skip (a command seeded
+before boot is never executed). It needs no `python` — only git, `openssl`, `base64`.
 
 ## What it covers
 - happy-path round-trip (signed + unsigned)

@@ -17,6 +17,19 @@ stdout = result  ←  Issue closed            ←
 
 **Two ends, one pipe. Neither end knows the pipe exists.**
 
+### Two transports, one protocol
+
+The same `dao1` envelope rides over either carrier:
+
+| Transport | Carrier | Devin-side auth | When |
+|-----------|---------|-----------------|------|
+| **git pipe** (recommended) | `dao-pipe` branch: `cmd/<id>` + `res/<id>` files | **none** - reuses the Devin VM's built-in git proxy, no token | any Devin/account plugs in zero-config |
+| Issues | Issue body + comment | a GitHub API token (`gh`/PAT/env) | when you want a human-visible Issue trail |
+
+A Devin VM can `git push`/`fetch` the user's repo through its proxy but has **no**
+direct `api.github.com` token, so the git pipe is what makes onboarding truly
+zero-config. See `_Devin.md`.
+
 ### Wire protocol (v1 / `dao1`)
 
 | Direction | Carrier | Format |
@@ -31,14 +44,34 @@ stdout = result  ←  Issue closed            ←
 
 | File | End | Role |
 |------|-----|------|
-| `dao-exec.sh` | Devin VM (Linux) | Transparent sender — one command, stdout = result |
+| `dao-git.sh` | Devin VM (Linux) | **git-pipe sender** — zero-config, no GitHub token (uses git proxy) |
+| `agent-git.ps1` | User PC (Windows) | **git-pipe receiver** — uses the machine's own git creds, no PAT |
+| `dao-exec.sh` | Devin VM (Linux) | Issues sender — one command, stdout = result (needs `gh`) |
 | `dao-exec.ps1` | Windows (testing) | Same, for local testing without gh CLI |
-| `agent.ps1` | User PC (Windows) | Transparent receiver — auto-auth, zero config |
+| `agent.ps1` | User PC (Windows) | Issues receiver — auto-auth token chain |
 | `_Devin.md` | Devin AI | Usage instructions (this is what Devin reads) |
 
 ## Setup
 
-### 1. User PC — one command
+### 0. git transport — zero-config (recommended)
+
+User PC (uses the machine's existing git access to the fork — no PAT):
+
+```powershell
+irm https://raw.githubusercontent.com/zhouyoukang1234-spec/devin-remote/main/agent-git.ps1 | iex
+```
+
+Devin AI (no token, works in any session via the git proxy):
+
+```bash
+curl -sL https://raw.githubusercontent.com/zhouyoukang1234-spec/devin-remote/main/dao-git.sh -o dao-git.sh && chmod +x dao-git.sh
+./dao-git.sh "hostname"
+```
+
+Set `DAO_SECRET` on both ends for HMAC-signed mode. The sections below describe the
+alternative Issues transport (REST API, needs a Devin-side token).
+
+### 1. User PC — one command (Issues transport)
 
 ```powershell
 irm https://raw.githubusercontent.com/zhouyoukang1234-spec/devin-remote/main/agent.ps1 | iex
@@ -85,11 +118,13 @@ Fork this repo → set `DAO_REPO=yourname/devin-remote` → done.
 
 | Command | Result | Status |
 |---------|--------|--------|
-| `hostname` | `DESKTOP-MASTER` | ✓ |
-| `whoami` | `desktop-master\administrator` | ✓ |
-| `echo hello dao` | `hello dao` | ✓ |
+| `hostname` | `DESKTOP-MASTER` | OK |
+| `whoami` | `desktop-master\administrator` | OK |
+| `echo hello dao` | `hello dao` | OK |
 
 Protocol/hardening also verified via real GitHub round-trips (signed exec, signature rejection, triple-backtick/unicode output round-trip, restart de-dup).
+
+**git transport** verified end-to-end: offline harness (`test/e2e-git.sh`, 8/8 — basic, multiline, unicode, failure path, signature rejection, metacharacters, stale-skip) and a live signed round-trip against this repo through the Devin git proxy with **no GitHub token** (`hostname`, `$env:USERNAME`, unicode `道法自然`, arithmetic all returned).
 
 ## Hardening notes
 
