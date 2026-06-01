@@ -3,7 +3,7 @@ dao agent — transparent transport pipe receiver
 GitHub Issues = invisible command channel
 Usage: irm https://raw.githubusercontent.com/{user}/devin-remote/main/agent.ps1 | iex
 #>
-param([string]$Repo = "zhouyoukang1234-spec/devin-remote", [string]$Token = "")
+param([string]$Repo = "zhouyoukang1234-spec/devin-remote", [string]$Token = "", [string]$Secret = $env:DAO_SECRET)
 $LABEL = "devin-cmd"
 
 # ── Single Add-Type: WinCred + HttpClient + auto-proxy ──
@@ -59,7 +59,7 @@ public class DaoHttp {
 # ── Auto proxy detection ──
 $proxyUrl = ""
 $proxyEnv = $env:HTTPS_PROXY, $env:HTTP_PROXY | Where-Object { $_ } | Select-Object -First 1
-if ($proxyEnv) { $proxyUrl = $proxyUrl -replace '^https?://', 'http://' }
+if ($proxyEnv) { $proxyUrl = $proxyEnv -replace '^https?://', 'http://' }
 else {
   foreach ($port in 7897, 7890, 10808, 1080, 2080) {
     try { $c = New-Object Net.Sockets.TcpClient("127.0.0.1", $port)
@@ -125,33 +125,94 @@ else { Write-Host "[dao] auth failed" -F Red; exit 1 }
 
 $API = "https://api.github.com/repos/$Repo"
 
+# ── Protocol helpers (pure PS — HMAC/base64 cross-platform) ──
+function ConvertTo-DaoB64([string]$s) { [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($s)) }
+function ConvertFrom-DaoB64([string]$s) { [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($s)) }
+function Get-DaoHmac([string]$key, [string]$msg) {
+  $h = [System.Security.Cryptography.HMACSHA256]::new([Text.Encoding]::UTF8.GetBytes($key))
+  try { (($h.ComputeHash([Text.Encoding]::UTF8.GetBytes($msg)) | ForEach-Object { $_.ToString('x2') }) -join '') }
+  finally { $h.Dispose() }
+}
+# Constant-time compare. Empty $Secret = signing disabled (zero-config default).
+function Test-DaoSig([string]$key, [string]$b64, [string]$sig) {
+  if (-not $key) { return $true }
+  if (-not $sig -or $sig -eq '-') { return $false }
+  $calc = Get-DaoHmac $key $b64
+  if ($calc.Length -ne $sig.Length) { return $false }
+  $diff = 0
+  for ($k = 0; $k -lt $calc.Length; $k++) { $diff = $diff -bor ([byte][char]$calc[$k] -bxor [byte][char]$sig[$k]) }
+  return ($diff -eq 0)
+}
+# Result protocol: line1 marker+status+ms, line2 base64(output). No markdown fences.
+function Send-DaoResult([int]$num, [string]$status, [long]$ms, [string]$output) {
+  if ($output.Length -gt 60000) { $output = $output.Substring(0, 60000) + "`n[truncated]" }
+  $body = "dao1-result $status $ms`n" + (ConvertTo-DaoB64 $output)
+  $json = '{"body":' + ($body | ConvertTo-Json) + '}'
+  try { [DaoHttp]::Post("$API/issues/$num/comments", $json, $Token) | Out-Null } catch {}
+  try { [DaoHttp]::Patch("$API/issues/$num", '{"state":"closed"}', $Token) | Out-Null } catch {}
+}
+
 # ── Ensure label ──
 try { [DaoHttp]::Get("$API/labels/$LABEL", $Token) | Out-Null }
 catch { try { [DaoHttp]::Post("$API/labels", '{"name":"' + $LABEL + '","color":"0075ca"}', $Token) | Out-Null } catch {} }
 
 # ── Transport loop ──
-Write-Host "[dao] pipe active (Ctrl+C stop)" -F Cyan
+$boot = [DateTimeOffset]::UtcNow.AddSeconds(-5)
+$signed = [bool]$Secret
+if (-not $signed) { Write-Host "[dao] WARNING: unsigned mode — set DAO_SECRET on both ends to require HMAC" -F Yellow }
+Write-Host "[dao] pipe active (signed=$signed) (Ctrl+C stop)" -F Cyan
 $seen = @{}
 while ($true) {
   try {
-    $issuesJson = [DaoHttp]::Get("$API/issues?labels=$LABEL&state=open&per_page=10", $Token)
+    $issuesJson = [DaoHttp]::Get("$API/issues?labels=$LABEL&state=open&per_page=20&sort=created&direction=asc", $Token)
     $issues = $issuesJson | ConvertFrom-Json
     foreach ($i in $issues) {
       $id = $i.number
       if ($seen[$id]) { continue }
       $seen[$id] = 1
-      $cmd = $i.body
-      if (-not $cmd) { continue }
+      if ($seen.Count -gt 500) { $seen = @{}; $seen[$id] = 1 }
+
+      # Skip backlog created before this agent booted (no mass-execution on reconnect)
+      $created = [DateTimeOffset]::Parse($i.created_at)
+      if ($created -lt $boot) {
+        Write-Host "[dao] ~ skip stale #$id" -F DarkGray
+        Send-DaoResult $id "False" 0 "[dao] skipped: stale command (agent (re)started)"
+        continue
+      }
+
+      # Idempotency: if already answered, just ensure closed (kills duplicate execution)
+      $cmts = [DaoHttp]::Get("$API/issues/$id/comments", $Token) | ConvertFrom-Json
+      if ($cmts | Where-Object { $_.body -like 'dao1-result*' }) {
+        try { [DaoHttp]::Patch("$API/issues/$id", '{"state":"closed"}', $Token) | Out-Null } catch {}
+        continue
+      }
+
+      # Parse signed envelope: "dao1 <b64cmd> <hmac|->"
+      $raw = if ($i.body) { ($i.body -replace '\r', '').Trim() } else { '' }
+      $parts = $raw -split '\s+'
+      if ($parts.Count -lt 2 -or $parts[0] -ne 'dao1') {
+        Write-Host "[dao] ! bad envelope #$id" -F Red
+        Send-DaoResult $id "False" 0 "[dao] rejected: bad envelope (expected 'dao1 <b64> <sig>')"
+        continue
+      }
+      $b64 = $parts[1]
+      $sig = if ($parts.Count -ge 3) { $parts[2] } else { '-' }
+      if (-not (Test-DaoSig $Secret $b64 $sig)) {
+        Write-Host "[dao] ! signature rejected #$id" -F Red
+        Send-DaoResult $id "False" 0 "[dao] rejected: invalid/missing signature"
+        continue
+      }
+      try { $cmd = ConvertFrom-DaoB64 $b64 } catch {
+        Send-DaoResult $id "False" 0 "[dao] rejected: bad base64 payload"
+        continue
+      }
+
       Write-Host "[dao] > $cmd" -F Yellow
       $sw = [Diagnostics.Stopwatch]::StartNew()
-      try { $out = Invoke-Expression $cmd 2>&1 | Out-String; $ok = $true } catch { $out = $_.Exception.Message; $ok = $false }
+      try { $out = Invoke-Expression $cmd 2>&1 | Out-String; $ok = "True" } catch { $out = $_.Exception.Message; $ok = "False" }
       $sw.Stop()
-      if ($out.Length -gt 60000) { $out = $out.Substring(0, 60000) + "`n[truncated]" }
-      $res = "**Result** ($($sw.ElapsedMilliseconds)ms) ``$ok```n`````n$out``````n"
-      $resJson = '{"body":' + ($res | ConvertTo-Json) + '}'
-      try { [DaoHttp]::Post("$API/issues/$($i.number)/comments", $resJson, $Token) | Out-Null } catch {}
-      try { [DaoHttp]::Patch("$API/issues/$($i.number)", '{"state":"closed"}', $Token) | Out-Null } catch {}
-      Write-Host "[dao] < done ($($sw.ElapsedMilliseconds)ms)" -F Green
+      Send-DaoResult $id $ok $sw.ElapsedMilliseconds $out
+      Write-Host "[dao] < #$id done ($($sw.ElapsedMilliseconds)ms)" -F Green
     }
   } catch {}
   Start-Sleep 5
