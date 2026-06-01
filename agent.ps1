@@ -1,5 +1,5 @@
 <#
-dao agent — transparent transport pipe receiver
+dao agent - transparent transport pipe receiver
 GitHub Issues = invisible command channel
 Usage: irm https://raw.githubusercontent.com/{user}/devin-remote/main/agent.ps1 | iex
 #>
@@ -8,7 +8,7 @@ $LABEL = "devin-cmd"
 if (-not $ApiBase) { $ApiBase = "https://api.github.com" }
 $ApiBase = $ApiBase.TrimEnd('/')
 
-# ── Single Add-Type: WinCred + HttpClient + auto-proxy ──
+# -- Single Add-Type: WinCred + HttpClient + auto-proxy --
 # PS 5.1 (Desktop) resolves WebProxy from System.dll; PS 7 (Core) needs explicit refs.
 $daoRefs = @('System.Net.Http')
 if ($PSVersionTable.PSEdition -eq 'Core') { $daoRefs += @('System.Net.Primitives', 'System.Net.WebProxy') }
@@ -61,7 +61,7 @@ public class DaoHttp {
 }
 "@
 
-# ── Auto proxy detection ──
+# -- Auto proxy detection --
 $proxyUrl = ""
 $proxyEnv = $env:HTTPS_PROXY, $env:HTTP_PROXY | Where-Object { $_ } | Select-Object -First 1
 if ($proxyEnv) { $proxyUrl = $proxyEnv -replace '^https?://', 'http://' }
@@ -73,9 +73,9 @@ else {
 }
 [DaoHttp]::SetProxy($proxyUrl)
 
-# ── Auto auth chain (zero user input) ──
+# -- Auto auth chain (zero user input) --
 if (-not $Token) {
-  # 1. Windows Credential Manager (what git actually uses — most reliable; no-op off Windows)
+  # 1. Windows Credential Manager (what git actually uses - most reliable; no-op off Windows)
   try { $t1 = [DaoCred]::Get("git:https://github.com") } catch { $t1 = "" }
   try { $t2 = [DaoCred]::Get("git:https://zhouyoukang@github.com") } catch { $t2 = "" }
   if ($t1) { $Token = $t1 } elseif ($t2) { $Token = $t2 }
@@ -88,7 +88,7 @@ if (-not $Token) {
     $gc = Get-Content "$env:USERPROFILE\.git-credentials" -EA 0 | Where-Object { $_ -match 'github\.com' } | Select-Object -First 1
     if ($gc -match ':([^:@]+)@github') { $Token = $Matches[1] }
   }
-  # 5. Device Flow (last resort — uses GitHub CLI's public OAuth App)
+  # 5. Device Flow (last resort - uses GitHub CLI's public OAuth App)
   if (-not $Token) {
     $CID = "178c6fc778ccc68e1d6a"
     try {
@@ -121,16 +121,16 @@ if (-not $Token) {
     } catch { Write-Host "[dao] Device Flow failed: $_" -F Red }
   }
 }
-if (-not $Token) { Write-Host "[dao] no token — set DAO_TOKEN env or run: gh auth login" -F Red; exit 1 }
+if (-not $Token) { Write-Host "[dao] no token - set DAO_TOKEN env or run: gh auth login" -F Red; exit 1 }
 
-# ── Verify token ──
+# -- Verify token --
 $meJson = [DaoHttp]::Get("$ApiBase/user", $Token)
 if ($meJson -match '"login":"([^"]+)"') { Write-Host "[dao] $($Matches[1]) @ $Repo$(if($proxyUrl){' (proxy)'})" -F Green }
 else { Write-Host "[dao] auth failed" -F Red; exit 1 }
 
 $API = "$ApiBase/repos/$Repo"
 
-# ── Protocol helpers (pure PS — HMAC/base64 cross-platform) ──
+# -- Protocol helpers (pure PS - HMAC/base64 cross-platform) --
 function ConvertTo-DaoB64([string]$s) { [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($s)) }
 function ConvertFrom-DaoB64([string]$s) { [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($s)) }
 function Get-DaoHmac([string]$key, [string]$msg) {
@@ -157,14 +157,14 @@ function Send-DaoResult([int]$num, [string]$status, [long]$ms, [string]$output) 
   try { [DaoHttp]::Patch("$API/issues/$num", '{"state":"closed"}', $Token) | Out-Null } catch {}
 }
 
-# ── Ensure label ──
+# -- Ensure label --
 try { [DaoHttp]::Get("$API/labels/$LABEL", $Token) | Out-Null }
 catch { try { [DaoHttp]::Post("$API/labels", '{"name":"' + $LABEL + '","color":"0075ca"}', $Token) | Out-Null } catch {} }
 
-# ── Transport loop ──
+# -- Transport loop --
 $boot = [DateTimeOffset]::UtcNow.AddSeconds(-5)
 $signed = [bool]$Secret
-if (-not $signed) { Write-Host "[dao] WARNING: unsigned mode — set DAO_SECRET on both ends to require HMAC" -F Yellow }
+if (-not $signed) { Write-Host "[dao] WARNING: unsigned mode - set DAO_SECRET on both ends to require HMAC" -F Yellow }
 Write-Host "[dao] pipe active (signed=$signed) (Ctrl+C stop)" -F Cyan
 $seen = @{}
 while ($true) {
