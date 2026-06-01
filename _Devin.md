@@ -26,6 +26,7 @@ Output appears in stdout — block until result returns (default 120s timeout).
 | `DAO_REPO` | `zhouyoukang1234-spec/devin-remote` | Target repo |
 | `DAO_TIMEOUT` | `120` | Max wait seconds |
 | `DAO_SECRET` | _(unset)_ | HMAC-SHA256 key — must match `agent.ps1` or the command is rejected |
+| `DAO_API` | `https://api.github.com` | REST base URL override (GitHub Enterprise / self-test); honored by `agent.ps1` + `dao-exec.ps1` |
 
 When `DAO_SECRET` is set, `dao-exec` signs each command and the agent runs it only if the signature is valid. Leave it unset for zero-config (unsigned) use.
 

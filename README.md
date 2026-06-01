@@ -63,6 +63,10 @@ irm https://raw.githubusercontent.com/zhouyoukang1234-spec/devin-remote/main/age
 
 Without `DAO_SECRET` the agent runs in unsigned mode (zero-config, prints a warning).
 
+**Custom API host (GitHub Enterprise / testing):** set `DAO_API` to override the REST base URL (default `https://api.github.com`). Both `agent.ps1` and `dao-exec.ps1` honor it, e.g. `$env:DAO_API = "https://ghe.example.com/api/v3"`. The Linux sender `dao-exec.sh` uses the `gh` CLI, so point it at an enterprise host with `gh`'s own `GH_HOST`.
+
+**PowerShell support:** runs on both Windows PowerShell 5.1 (Desktop) and PowerShell 7+ (Core, incl. Linux/macOS) — the assemblies needed for proxy support are referenced conditionally per edition.
+
 ### 2. Devin AI — one command
 
 ```bash
