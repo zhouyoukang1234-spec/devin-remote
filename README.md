@@ -56,6 +56,10 @@ Runs on Windows PowerShell 5.1 (Desktop) and PowerShell 7+ (Core). Needs Git for
 on `PATH`. If the machine has no git credentials yet, Git's own helper prompts a one-time
 browser sign-in the first time the agent pushes output - no hand-made PAT.
 
+Behind a proxy/VPN, the agent automatically routes git through the same proxy the OS uses
+(git ignores the system proxy by default), and prints a clear error at startup if git still
+can't reach the repo - so it never just hangs silently.
+
 **2. Devin AI - one command:**
 
 ```bash

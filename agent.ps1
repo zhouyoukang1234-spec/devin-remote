@@ -26,10 +26,21 @@ $git = (Get-Command git -EA 0).Source
 if (-not $git) { Write-Host "[dao] git not found on PATH - install Git for Windows" -F Red; exit 1 }
 $work = Join-Path $Cache ($Repo -replace '[/:]', '_')
 
-# git wrapper: pin identity + LF so the pipe is byte-stable; return ONLY the exit code
-# (git's own output is captured, never leaked to the pipeline).
+# Make git take the same network path as the OS/irm. Git ignores the system proxy by default and
+# may carry a stale http.proxy (e.g. a dead port), so script downloads succeed while git fetch/push
+# silently fail. We read the proxy the OS actually uses for github and force git through it; if there
+# is none we set an empty proxy, which forces a direct connection and overrides any stale config.
+$DaoProxy = ""
+try {
+  $u = [System.Net.WebRequest]::GetSystemWebProxy().GetProxy([Uri]"https://github.com/")
+  if ($u -and $u.Host -ne "github.com") { $DaoProxy = $u.AbsoluteUri.TrimEnd('/') }
+} catch {}
+
+# git wrapper: pin identity + LF + proxy so the pipe is byte-stable; return ONLY the exit code
+# (git's own output is captured into $script:DaoGitOut, never leaked to the pipeline).
 function Invoke-Git { param([Parameter(ValueFromRemainingArguments=$true)][string[]]$Args)
-  $script:DaoGitOut = & $git -C $work -c user.name=dao -c user.email=dao@pipe -c core.autocrlf=false @Args 2>&1
+  $cfg = @('-C', $work, '-c', 'user.name=dao', '-c', 'user.email=dao@pipe', '-c', 'core.autocrlf=false', '-c', "http.proxy=$DaoProxy")
+  $script:DaoGitOut = & $git @cfg @Args 2>&1
   return $LASTEXITCODE
 }
 function To-B64([string]$s)   { [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($s)) }
@@ -58,6 +69,13 @@ New-Item -ItemType Directory -Force -Path $work | Out-Null
 Invoke-Git init -q | Out-Null
 Invoke-Git remote add origin $Remote | Out-Null
 
+# connectivity self-check: surface proxy/network failures loudly instead of looping in silence.
+if ((Invoke-Git ls-remote $Remote) -ne 0) {
+  Write-Host "[dao] WARNING: git cannot reach $Remote - proxy/network issue:" -F Red
+  Write-Host (($script:DaoGitOut | Out-String).Trim()) -F DarkGray
+  Write-Host "[dao] the agent will keep retrying; fix connectivity and it will catch up." -F DarkGray
+}
+
 # baseline (clock-free): snapshot the commands that already exist right now, and ignore them.
 $baseline = @{}
 if ((Invoke-Git fetch -q origin $Pipe) -eq 0) {
@@ -65,7 +83,8 @@ if ((Invoke-Git fetch -q origin $Pipe) -eq 0) {
   $cmdDir = Join-Path $work "cmd"
   if (Test-Path $cmdDir) { foreach ($f in Get-ChildItem $cmdDir -File) { $baseline[$f.Name] = 1 } }
 }
-Write-Host "[dao] pipe active: $Repo @ $Pipe  (Ctrl+C to stop)" -F Cyan
+$pmsg = if ($DaoProxy) { "via proxy $DaoProxy" } else { "direct" }
+Write-Host "[dao] pipe active: $Repo @ $Pipe ($pmsg)  (Ctrl+C to stop)" -F Cyan
 
 $seen = @{}
 while ($true) {
