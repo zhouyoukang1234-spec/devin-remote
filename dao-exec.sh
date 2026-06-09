@@ -12,6 +12,7 @@ REPO="${DAO_REPO:-zhouyoukang1234-spec/devin-remote}"
 TOKEN="${DAO_TOKEN:-}"
 TIMEOUT="${DAO_TIMEOUT:-120}"
 API="https://api.github.com/repos/$REPO"
+PY="$(command -v python3 || command -v python)"
 AGENT=""
 CMD_TYPE="shell"
 LIST_AGENTS=""
@@ -64,7 +65,7 @@ PAYLOAD_CMD="${PAYLOAD_CMD# }"
 # ════════════════════════════════════════════════════════════
 if [ -n "$LIST_AGENTS" ]; then
   echo "[dao] scanning mailbox issues..."
-  dao_api GET "/issues?labels=dao-mailbox&state=open&per_page=100" | python3 -c "
+  dao_api GET "/issues?labels=dao-mailbox&state=open&per_page=100" | "$PY" -c "
 import json,sys
 try:
   for i in json.load(sys.stdin):
@@ -88,7 +89,7 @@ TARGET="${AGENT:?usage: dao-exec.sh -a <agent> <command>}"
 MAILBOX=0
 
 # Use labels query: 1 API call finds all mailbox issues
-MAILBOX="$(dao_api GET "/issues?labels=dao-mailbox&state=open&per_page=100" | python3 -c "
+MAILBOX="$(dao_api GET "/issues?labels=dao-mailbox&state=open&per_page=100" | "$PY" -c "
 import json,sys
 try:
   for i in json.load(sys.stdin):
@@ -100,7 +101,7 @@ except: print('0')
 
 if [ "$MAILBOX" -eq 0 ]; then
   BODY="{\"title\":\"mailbox-$TARGET\",\"body\":\"dao mailbox v4 — $TARGET\",\"labels\":[\"dao-mailbox\"]}"
-  MAILBOX="$(dao_api POST "/issues" "$BODY" | python3 -c "
+  MAILBOX="$(dao_api POST "/issues" "$BODY" | "$PY" -c "
 import json,sys
 try: print(json.load(sys.stdin).get('number','0'))
 except: print('0')
@@ -115,12 +116,12 @@ echo "[dao] mailbox: #$MAILBOX"
 # ════════════════════════════════════════════════════════════
 # §5 · Send command + wait for result
 # ════════════════════════════════════════════════════════════
-ESC_CMD="$(printf '%s' "$PAYLOAD_CMD" | python3 -c 'import json,sys; print(json.dumps(sys.stdin.read().strip()))')"
+ESC_CMD="$(printf '%s' "$PAYLOAD_CMD" | "$PY" -c 'import json,sys; print(json.dumps(sys.stdin.read().strip()))')"
 CMD_JSON="{\"type\":\"$CMD_TYPE\",\"payload\":{\"command\":$ESC_CMD}}"
 CMD_B64="$(b64 "$CMD_JSON")"
 BODY="{\"body\":\"dao-cmd:$CMD_B64\"}"
 
-dao_api POST "/issues/$MAILBOX/comments" "$BODY" | python3 -c "
+dao_api POST "/issues/$MAILBOX/comments" "$BODY" | "$PY" -c "
 import json,sys
 try: print('[dao] sent to $TARGET (comment', json.load(sys.stdin).get('id','?'), ')')
 except: print('[dao] sent to $TARGET')
@@ -129,7 +130,7 @@ except: print('[dao] sent to $TARGET')
 DEADLINE=$(( $(date +%s) + TIMEOUT ))
 while [ $(date +%s) -lt $DEADLINE ]; do
   sleep 3
-  RESULT="$(dao_api GET "/issues/$MAILBOX/comments?per_page=10&sort=created&direction=desc" | python3 -c "
+  RESULT="$(dao_api GET "/issues/$MAILBOX/comments?per_page=10&sort=created&direction=desc" | "$PY" -c "
 import json,sys,base64
 try:
   for c in json.load(sys.stdin):
@@ -142,7 +143,7 @@ except: pass
 " 2>/dev/null)"
 
   if [ -n "$RESULT" ]; then
-    printf '%s' "$RESULT" | python3 -c "
+    printf '%s' "$RESULT" | "$PY" -c "
 import json,sys
 try:
   r = json.load(sys.stdin)

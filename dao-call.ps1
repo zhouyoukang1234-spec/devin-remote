@@ -1,4 +1,4 @@
-<#
+﻿<#
 dao-call v4.1 · 大道至简 · 太上 下知有之
 Mailbox Pattern commander · Pure HTTPS
 
@@ -97,7 +97,7 @@ function send($agent,$type,$payload,[int]$sec=$Timeout){
   # post command
   $cmd = @{type=$type;payload=$payload}|ConvertTo-Json -Depth 5 -Compress
   try{
-    api POST "/issues/$mb/comments" (@{body="dao-cmd:$(b64 $cmd)"}|ConvertTo-Json -Compress)
+    $null = api POST "/issues/$mb/comments" (@{body="dao-cmd:$(b64 $cmd)"}|ConvertTo-Json -Compress)
     Write-Host "[dao] -> $target (mailbox #$mb)" -ForegroundColor Cyan
   }catch{
     Write-Host "[dao] send failed" -ForegroundColor Red; return $null
