@@ -1,0 +1,17 @@
+# === privacy / credentials: never sync to GitHub ===
+*账资*
+**/accounts.md
+**/10_accounts.md
+**/secrets.json
+**/*cookies-result*.txt
+**/token-precise-result*.txt
+*.pem
+*.key
+.env
+node_modules/
+.sync_push.log
+.sync_push_job.ps1
+
+# large re-downloadable binaries (GFW-flaky push)
+**/cloudflared.exe
+
