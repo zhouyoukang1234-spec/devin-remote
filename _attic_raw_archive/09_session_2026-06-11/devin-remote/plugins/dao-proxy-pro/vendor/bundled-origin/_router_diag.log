@@ -1,0 +1,13 @@
+[2026-06-11T02:06:38.155Z] route() entry: modelUid=MODEL_SWE_1_6_FAST normalized=MODEL_SWE_1_6_FAST target=deepseek/deepseek-v4-flash bodyLen=5822
+[2026-06-11T02:06:38.197Z] route() parse ok: msgs=1 tools=0 sysLen=77 modelUid=MODEL_SWE_1_6_FAST
+[2026-06-11T02:06:38.205Z] _callProvider thinking: enabled for model=deepseek-v4-flash
+[2026-06-11T02:06:38.637Z] _tryRoute  HTTP 400: {"error":{"message":"Failed to deserialize the JSON body into the target type: messages[1].role: invalid type: integer `1`, expected variant identifier at line 1 column 134","type":"invalid_request_er model=deepseek-v4-flash
+[2026-06-11T02:06:38.637Z] route() ALL FAIL: MODEL_SWE_1_6_FAST headersSent=false
+[2026-06-11T02:08:03.944Z] route() entry: modelUid=MODEL_SWE_1_6_FAST normalized=MODEL_SWE_1_6_FAST target=deepseek/deepseek-v4-flash bodyLen=260
+[2026-06-11T02:08:03.953Z] _callProvider thinking: enabled for model=deepseek-v4-flash
+[2026-06-11T02:08:03.950Z] route() parse ok: msgs=1 tools=0 sysLen=77 modelUid=MODEL_SWE_1_6_FAST
+[2026-06-11T02:08:04.350Z] _tryRoute  writeHead(200) streamMode=stream model=deepseek-v4-flash
+[2026-06-11T02:09:02.459Z] route() entry: modelUid=MODEL_SWE_1_6_FAST normalized=MODEL_SWE_1_6_FAST target=deepseek/deepseek-v4-flash bodyLen=260
+[2026-06-11T02:09:02.463Z] route() parse ok: msgs=1 tools=0 sysLen=77 modelUid=MODEL_SWE_1_6_FAST
+[2026-06-11T02:09:02.467Z] _callProvider thinking: enabled for model=deepseek-v4-flash
+[2026-06-11T02:09:02.835Z] _tryRoute  writeHead(200) streamMode=stream model=deepseek-v4-flash
