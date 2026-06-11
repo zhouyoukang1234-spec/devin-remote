@@ -4364,12 +4364,23 @@ function _pbExtractModelEntry(buf) {
       uid = x.s;
   }
   // familyUid: uid 形且为 modelUid 之前缀(归一点/连字后) · 或含点形 · 短于 modelUid
+  //   ★ v9.9.271 · 取最具体族形: 优先含点(规范族 gpt-5.5/claude-opus-4.8), 再取最长前缀
+  //   (弃"首个前缀"旧法, 否则 gpt-5.5/5.2/5.1 误并入 gpt-5)
   const _nu = (s) => String(s || "").replace(/\./g, "-").toLowerCase();
-  for (const x of strs) {
-    if (!_UID_RE.test(x.s) || famUid) continue;
-    const isPrefix =
-      uid && x.s !== uid && _nu(uid).indexOf(_nu(x.s)) === 0 && x.s.length < uid.length;
-    if (isPrefix || x.s.indexOf(".") >= 0) famUid = x.s;
+  {
+    let bestScore = -1;
+    for (const x of strs) {
+      const s = x.s;
+      if (!_UID_RE.test(s) || s === uid) continue;
+      const ns = _nu(s);
+      const isPrefix = uid && _nu(uid).indexOf(ns) === 0 && ns.length < _nu(uid).length;
+      if (!isPrefix && s.indexOf(".") < 0) continue;
+      const score = ns.length + (s.indexOf(".") >= 0 ? 1000 : 0); // 含点优先 · 再比长
+      if (score > bestScore) {
+        bestScore = score;
+        famUid = s;
+      }
+    }
   }
   // label / familyLabel: 人读串(有空格或含大写+数字) · 非枚举·非 uid·非 harness 词
   const humans = strs
@@ -4382,15 +4393,41 @@ function _pbExtractModelEntry(buf) {
         !/^[a-z]+(-[a-z]+)+$/.test(s) && // harness 词 strawberry-pancake
         (/\s/.test(s) || /[A-Z].*[0-9]/.test(s) || /[a-z][A-Z]/.test(s)),
     );
-  // label = 最长人读串(整档名 Claude Opus 4.7 Medium) · familyLabel = 其前缀短串
-  humans.sort((a, b) => b.length - a.length);
-  label = humans[0] || null;
-  for (const h of humans) {
-    if (h !== label && (!famLabel || h.length < famLabel.length)) {
-      if (label && label.indexOf(h) === 0) famLabel = h; // 前缀
+  // ★ v9.9.271 · 名实归一: 真档名(Claude Opus 4.8 Medium)归一后 === modelUid;
+  //   族名(Claude Opus 4.8)归一后 === familyUid · 故以 uid 为锚选人读串,
+  //   弃"最长串"之旧法(它会误取 UI 提示 "Higher effort consumes more tokens" 等长句)
+  const _normLbl = (s) =>
+    String(s || "")
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "");
+  // token 多重集: 容词序之异(uid claude-5-fable ↔ 显名 Claude Fable 5)
+  const _toks = (s) => _normLbl(s).split("-").filter(Boolean);
+  const _subMulti = (a, b) => {
+    const m = Object.create(null);
+    for (const t of b) m[t] = (m[t] || 0) + 1;
+    for (const t of a) {
+      if (!m[t]) return false;
+      m[t]--;
     }
-  }
-  if (!famLabel) famLabel = label;
+    return true;
+  };
+  // 以 uid token 集为锚, 取"token 超集且额外最少"之人读串 = 规范全显名
+  const _pickByUid = (anchor) => {
+    if (!anchor) return null;
+    const at = _toks(anchor);
+    if (!at.length) return null;
+    const ms = humans.filter((h) => _subMulti(at, _toks(h)));
+    ms.sort((a, b) => _toks(a).length - _toks(b).length);
+    return ms[0] || null;
+  };
+  // label: 整档显名(Claude Opus 4.8 Medium / GPT-5.5 Low Thinking)
+  label = _pickByUid(uid);
+  // familyLabel: 族显名(Claude Opus 4.8 / Claude Fable 5 / GPT-5.5)
+  famLabel = _pickByUid(famUid);
+  // 兜底: 无锚命中则由 uid 美化(绝不取 UI 提示长句)
+  if (!label) label = uid ? _prettyUid(uid) : null;
+  if (!famLabel) famLabel = famUid ? _prettyUid(famUid) : label;
   if (!uid && !label) return null;
   return {
     uid: uid || (label ? label.toLowerCase().replace(/[^a-z0-9]+/g, "-") : ""),
@@ -4401,12 +4438,33 @@ function _pbExtractModelEntry(buf) {
   };
 }
 
+// uid → 人读族名 美化 (claude-opus-4.8 → Claude Opus 4.8 · 兜底用)
+function _prettyUid(u) {
+  const BR = {
+    claude: "Claude", gpt: "GPT", swe: "SWE", kimi: "Kimi", gemini: "Gemini",
+    grok: "Grok", xai: "xAI", deepseek: "DeepSeek", qwen: "Qwen", glm: "GLM",
+    opus: "Opus", sonnet: "Sonnet", haiku: "Haiku", fable: "Fable",
+    codex: "Codex", flash: "Flash", pro: "Pro", max: "Max", mini: "Mini",
+    fast: "Fast", low: "Low", medium: "Medium", high: "High", thinking: "Thinking",
+  };
+  return String(u || "")
+    .split("-")
+    .map((t) =>
+      BR[t] || (/[0-9]/.test(t) ? t : t.charAt(0).toUpperCase() + t.slice(1)),
+    )
+    .join(" ")
+    .trim();
+}
+
 // 由活捕模型项构建家族归一结构 (与 _getOfficialFamilies 静态结构同形)
 function _buildLiveFamilies(models) {
   const fams = new Map();
   const order = [];
   for (const m of models) {
-    if (!m || (!m.uid && !m.label)) continue;
+    if (!m || !m.uid) continue;
+    // ★ v9.9.271 · 真模型 uid 必含版本数字(claude-opus-4-8-medium·gpt-5-5-low);
+    //   弃无数字之伪项(UI 提示误析 cached-input·higher-effort-… 不成家族)
+    if (!/[0-9]/.test(m.uid)) continue;
     const key = m.familyUid || m.familyLabel || m.label || m.uid;
     const flabel = m.familyLabel || m.label || m.uid;
     if (!fams.has(key)) {
