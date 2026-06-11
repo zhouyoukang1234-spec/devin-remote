@@ -628,6 +628,29 @@ async function _ephemeralBind(srcPath, mode) {
   return h;
 }
 
+// v9.9.272 · 能力探针 · 远端反代是否提供 ea/* 接口 (模型路由/渠道面板所需)
+//   真因(141实证): 遗留 dao-proxy-min-9.9.64 与 pro 同算 FNV 端口 8937 · min 只有 /origin/ping
+//   无 /origin/ea/* → pro 若将就复用 min → 面板 /origin/ea/overview 一律 404「加载失败」
+//   真治: 不只看 self_file · 直接探 ea 能力 · 不兼容则不复用 · 自绑全功能后端 (柔弱胜刚强)
+async function _remoteServesEa(port) {
+  try {
+    const r = await httpGetJson(
+      `http://127.0.0.1:${port}/origin/ea/status`,
+      1500,
+    );
+    return !!(r && (r.ok === true || r.routes !== undefined));
+  } catch {
+    return false;
+  }
+}
+
+// 远端是否「不兼容」: 非最新 source.js (stale) 或 不提供 ea 能力 (旧/极简变体)
+async function _remoteIncompatible(port, selfFile) {
+  if (_isRemoteStale(selfFile)) return true;
+  if (!(await _remoteServesEa(port))) return true;
+  return false;
+}
+
 // 多窗口收敛 · 复用已发布的 dao 反代端口 (任一窗口先绑则余者共用 · 单一锚点)
 // 真因(141实证): 全实例共享 %APPDATA%\Devin\User\settings.json · 若各绑独立空闲端口
 //   则锚点互踩 → 故须收敛至单一端口 · 七十三章「不召而自来」
@@ -644,6 +667,14 @@ async function _reusePublishedProxy(mode) {
       ping.ok &&
       (ping.mode === "invert" || ping.mode === "passthrough")
     ) {
+      // ★ v9.9.272 · 仅复用「兼容且最新」的反代 · 否则不复用(回退自绑全功能后端)
+      if (await _remoteIncompatible(p, ping.self_file)) {
+        L.warn(
+          "proxy",
+          `published :${p} 不兼容(stale/无ea) → 不复用 · 自绑全功能后端`,
+        );
+        return null;
+      }
       _proxyHandle = _createRemoteHandle(p, ping.mode);
       _cachedPort = p;
       _livePort = p;
@@ -737,12 +768,13 @@ async function proxyStart(port, mode, _retried, _altAttempts) {
         ping.ok &&
         (ping.mode === "invert" || ping.mode === "passthrough")
       ) {
-        // v9.9.21 · 检远端 self_file 是否最新 · 旧则让位
+        // v9.9.21/272 · 检远端是否「不兼容」(非最新 self_file 或 无 ea 能力) · 不兼容则让位
         // 二十二章「夫唯不争 故莫能与之争」 · 七十六章「兵强则不胜」
-        if (!_retried && _isRemoteStale(ping.self_file)) {
+        const incompatible = await _remoteIncompatible(port, ping.self_file);
+        if (incompatible && !_retried) {
           L.warn(
             "proxy",
-            `remote stale self_file=${ping.self_file} → POST /_quit · 让位重起`,
+            `remote 不兼容(stale/无ea) self_file=${ping.self_file} → POST /_quit · 让位重起`,
           );
           await httpPostJson(
             `http://127.0.0.1:${port}/origin/_quit`,
@@ -752,6 +784,23 @@ async function proxyStart(port, mode, _retried, _altAttempts) {
           // 等远端 server.close 完毕 (远端 setTimeout 100ms · 加 close 时间)
           await new Promise((r) => setTimeout(r, 1500));
           return proxyStart(port, mode, true); // 一次重试 · 防递归无限
+        }
+        // ★ v9.9.272 · 不兼容且劝退无效(旧/极简反代不实现 /_quit) → 不将就复用
+        //   改绑空闲端口跑「自家全功能后端」· 面板 ea 接口可用 · 锚点跟随活端口
+        //   真因(141实证): min-9.9.64 不实现 /_quit → 旧版重试后将就复用 → 面板永 404
+        if (incompatible) {
+          L.warn(
+            "proxy",
+            `remote :${port} 不兼容且不让位 → 自绑全功能后端(空闲端口) · 软编码避让`,
+          );
+          try {
+            const h = await _ephemeralBind(srcPath, mode);
+            L.info("proxy", `ephemeral bind :${h.port} (避让不兼容反代 · 柔弱胜刚强)`);
+            return h;
+          } catch (e3) {
+            L.error("proxy", `ephemeral bind 失败: ${e3.message} · 退而复用远端`);
+            // 兜底: 实在绑不上才复用(至少 ping 可用) · 但面板可能受限
+          }
         }
         L.info(
           "proxy",
