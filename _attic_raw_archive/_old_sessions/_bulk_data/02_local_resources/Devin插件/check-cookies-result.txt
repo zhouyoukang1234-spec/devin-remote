@@ -1,0 +1,26 @@
+=== Electron Session Cookie 检查 ===
+
+--- Windsurf ---
+  Cookie DB存在: C:\Users\Administrator\AppData\Roaming\Windsurf\Network\Cookies
+  Size: 20480 bytes
+  Modified: 2026-04-25T08:50:04.489Z
+  复制成功 → E:\道\.windsurf\shards\fc75467d\tmp\cookies_Windsurf.db
+'sqlite3' is not recognized as an internal or external command,
+operable program or batch file.
+  SQLite读取失败: Command failed: sqlite3 "E:\道\.windsurf\shards\fc75467d\tmp\cookies_Windsurf.db" "SELECT host_key, n
+--- Devin ---
+  Cookie DB存在: C:\Users\Administrator\AppData\Roaming\Devin\Network\Cookies
+  Size: 20480 bytes
+  Modified: 2026-06-04T09:06:25.115Z
+  复制失败: EBUSY: resource busy or locked, copyfile 'C:\Users\Administrator\AppData\Roaming\Devin\Network\Cooki
+  esentutl也失败: Command failed: esentutl /y "C:\Users\Administrator\AppData\Roaming\Devin\Network\Cookies" /d "E:\道\
+--- Codeium ---
+  Cookie DB不存在: C:\Users\Administrator\AppData\Roaming\Codeium\Network\Cookies
+
+=== Local Storage 检查 ===
+--- Windsurf ---
+  Files: 000005.ldb, 005801.ldb, 005802.log, 005803.ldb, CURRENT, LOCK, LOG, LOG.old, MANIFEST-000001
+--- Devin ---
+  Files: 000005.ldb, 000817.log, 000819.ldb, CURRENT, LOCK, LOG, LOG.old, MANIFEST-000001
+
+=== 检查完成 ===
