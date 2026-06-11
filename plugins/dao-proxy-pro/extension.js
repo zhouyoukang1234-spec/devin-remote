@@ -163,6 +163,11 @@ let _cachedAnchored = false;
 let _cachedMode = "invert";
 let _activateTs = 0; // v9.9.36 · ext-host 生命周期追踪 · smart deactivate
 let _deferredAnchorTimer = null; // v9.9.36 · 延迟锚定计时器 · 渡过 Installation Modified 危窗
+// ★ v9.9.272 · 软编码适配一切环境 · 柔弱胜刚强 · 失败安全
+let _proxyHealthy = false; // 仅当本地/远端 dao 反代确认存活时为 true · 失败安全门控
+let _livePort = null; // 实际绑定端口 (软编码 · 可能为 OS 分配的空闲端口)
+let _extContext = null; // 扩展上下文 · 用于推导本实例 settings.json 路径 (跨产品名)
+let _lastLsRestart = 0; // LS 重启去抖时间戳 · 防多实例重启风暴
 
 // ═══════════════════════════ ACP 模式 (印222) ═══════════════════════════
 // v9.9.200 · 道法自然 · 反者道之动 · 新版 Devin Desktop 架构适配
@@ -216,6 +221,12 @@ function resolvePort() {
 }
 
 function cfg() {
+  // ★ v9.9.272 · 反代已健康则锁定实际端口 · 不让 FNV 重算覆盖 (webview/锚定取真端口)
+  if (_proxyHealthy && Number.isFinite(_livePort)) {
+    _cachedPort = _livePort;
+    _cachedProxyUrl = `http://127.0.0.1:${_cachedPort}`;
+    return { port: _cachedPort };
+  }
   _cachedPort = resolvePort();
   _cachedProxyUrl = `http://127.0.0.1:${_cachedPort}`;
   return { port: _cachedPort };
@@ -266,6 +277,15 @@ function maybeRewriteLsArgs(command, args) {
   // 道义: 四十章「反也者 道之动也」· 印222之判反 · 今正之
   if (false && _acpMode) {
     L.info("spawn-hook", `ACP模式: 跳过 LS args 重写 · SP由stdio代理处理`);
+    return false;
+  }
+  // ★ v9.9.272 · 失败安全门控 (柔弱胜刚强) · 仅当 dao 反代确认存活时才改写 LS
+  // 真因(141实证): 反代未绑定/端口被异族(Devin自身)占用时 · 旧版无条件改写
+  //   → LS 指向死端口 → 官方模型(SWE-1.6 Slow)一发即回弹 · 推理链路全断
+  // 真治: 反代不健康则原样直通 · "至少和没装插件一样能用" · 官方永不被弄坏
+  // 道义: 七十六章「柔弱者生之徒」· 七十八章「弱之胜强 · 柔之胜刚」
+  if (!_proxyHealthy) {
+    L.info("spawn-hook", `proxy 未就绪/不健康 → 不改写 LS args · 官方直通 (fail-safe)`);
     return false;
   }
   // v9.9.38 · 去 _cachedAnchored 门控 · 无条件重写 · 治多窗口竞态
@@ -570,6 +590,86 @@ function _isRemoteStale(remoteSelfFile) {
   return remoteSelfFile.toLowerCase() !== expected;
 }
 
+// ═══════════════════════════ v9.9.272 · 软编码端口 · 失败安全 ═══════════════════════════
+// 七十八章「天下莫柔弱于水 · 而攻坚强者莫之能胜」· 不争固定端口 · 唯变所适
+function _publishPort(port) {
+  try {
+    const dir = path.join(os.homedir(), ".dao");
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(
+      path.join(dir, "origin-port.json"),
+      JSON.stringify({
+        port,
+        pid: process.pid,
+        version: PKG_VERSION,
+        user: os.userInfo().username,
+        at: Date.now(),
+      }),
+      "utf8",
+    );
+  } catch {}
+}
+
+// OS 分配空闲端口 (port:0) · 当 FNV 段被 Devin 自身/多实例占满时让位避撞
+async function _ephemeralBind(srcPath, mode) {
+  const mod = require(srcPath);
+  if (typeof mod.start !== "function") throw new Error("源.js 无 start() 导出");
+  const h = await mod.start({
+    port: 0,
+    host: "127.0.0.1",
+    mode: mode || "passthrough",
+  });
+  _proxyHandle = h;
+  _cachedPort = h.port;
+  _livePort = h.port;
+  _proxyHealthy = true;
+  _cachedProxyUrl = `http://127.0.0.1:${h.port}`;
+  _publishPort(h.port);
+  return h;
+}
+
+// 多窗口收敛 · 复用已发布的 dao 反代端口 (任一窗口先绑则余者共用 · 单一锚点)
+// 真因(141实证): 全实例共享 %APPDATA%\Devin\User\settings.json · 若各绑独立空闲端口
+//   则锚点互踩 → 故须收敛至单一端口 · 七十三章「不召而自来」
+async function _reusePublishedProxy(mode) {
+  try {
+    const f = path.join(os.homedir(), ".dao", "origin-port.json");
+    if (!fs.existsSync(f)) return null;
+    const j = JSON.parse(fs.readFileSync(f, "utf8"));
+    const p = j && j.port;
+    if (!Number.isFinite(p)) return null;
+    const ping = await httpGetJson(`http://127.0.0.1:${p}/origin/ping`, 1500);
+    if (
+      ping &&
+      ping.ok &&
+      (ping.mode === "invert" || ping.mode === "passthrough")
+    ) {
+      _proxyHandle = _createRemoteHandle(p, ping.mode);
+      _cachedPort = p;
+      _livePort = p;
+      _proxyHealthy = true;
+      _cachedProxyUrl = `http://127.0.0.1:${p}`;
+      L.info("proxy", `reuse published dao proxy :${p} (多窗口收敛)`);
+      return _proxyHandle;
+    }
+  } catch {}
+  return null;
+}
+
+// LS 重启去抖 · 仅当锚点真变更时收敛 · 防多实例重启风暴
+function _maybeRestartLS(reason) {
+  const now = Date.now();
+  if (now - _lastLsRestart < 20000) {
+    L.info("restart-ls", `skip (debounce 20s) · ${reason}`);
+    return;
+  }
+  _lastLsRestart = now;
+  L.info("restart-ls", `trigger · ${reason}`);
+  try {
+    forceRestartLS();
+  } catch {}
+}
+
 async function proxyStart(port, mode, _retried, _altAttempts) {
   if (_proxyHandle) return _proxyHandle;
   const srcPath = findSourceJs();
@@ -584,17 +684,15 @@ async function proxyStart(port, mode, _retried, _altAttempts) {
       host: "127.0.0.1",
       mode: mode || "passthrough",
     });
-    // ★ v9.9.261 · EACCES 回退: 实际端口可能不同于 FNV 计算
-    if (port !== _cachedPort) {
-      L.info(
-        "proxy",
-        `port fallback: ${_cachedPort} → ${_proxyHandle.port} (EACCES回避)`,
-      );
-      _cachedPort = _proxyHandle.port;
-    }
+    // ★ v9.9.272 · 绑定成功 → 标记健康 · 记录实际端口 · 发布端口 (软编码)
+    _cachedPort = _proxyHandle.port;
+    _livePort = _proxyHandle.port;
+    _proxyHealthy = true;
+    _cachedProxyUrl = `http://127.0.0.1:${_cachedPort}`;
+    _publishPort(_cachedPort);
     L.info(
       "proxy",
-      `started :${_proxyHandle.port} src=${srcPath} mode=${_proxyHandle.getMode()}`,
+      `started :${_proxyHandle.port} src=${srcPath} mode=${_proxyHandle.getMode()} · healthy`,
     );
     return _proxyHandle;
   } catch (e) {
@@ -612,8 +710,18 @@ async function proxyStart(port, mode, _retried, _altAttempts) {
         );
         return proxyStart(altPort, mode, _retried, attempts + 1);
       }
-      L.error("proxy", `port :${port} EACCES · 20次回退均失败 · 放弃`);
-      throw e;
+      L.error("proxy", `port :${port} EACCES · 20次回退均失败 · 改绑空闲端口`);
+      try {
+        const reused = await _reusePublishedProxy(mode);
+        if (reused) return reused;
+        const h = await _ephemeralBind(srcPath, mode);
+        L.info("proxy", `ephemeral bind :${h.port} (EACCES 穷尽后避让 · 软编码)`);
+        return h;
+      } catch (e2) {
+        L.error("proxy", `ephemeral bind 亦失败: ${e2.message}`);
+        _proxyHealthy = false;
+        throw e;
+      }
     }
     if (
       e.code === "EADDRINUSE" ||
@@ -650,10 +758,33 @@ async function proxyStart(port, mode, _retried, _altAttempts) {
           `port :${port} live remote (mode=${ping.mode} · ver=${(ping.features || {}).mode || "?"}) → remote handle`,
         );
         _proxyHandle = _createRemoteHandle(port, ping.mode);
+        _cachedPort = port;
+        _livePort = port;
+        _proxyHealthy = true;
+        _cachedProxyUrl = `http://127.0.0.1:${port}`;
+        _publishPort(port);
         return _proxyHandle;
       }
-      L.warn("proxy", `port :${port} 占且非反代 · 返 null (本窗口直连)`);
-      return null;
+      // ★ v9.9.272 · 异族占用 (Devin 自身服务/多实例) → 让 · 改绑 OS 空闲端口
+      // 真因(141实证): 15+ Devin 实例占满 8889-8988 FNV 段 → 反代无处可绑
+      //   → 旧版 return null 弃守 → webview 仍 fetch 死端口 → "加载失败 HTTP 404"
+      // 真治: 不争固定端口 · port:0 让 OS 择空闲端口 (通常 4xxxx+ · 必不撞 Devin)
+      // 道义: 三十六章「将欲夺之 必固予之」· 七十八章「天下莫柔弱于水」
+      L.warn("proxy", `port :${port} 占且非 dao 反代(异族) → 让 · 改绑空闲端口 (port:0 软编码)`);
+      try {
+        const reused = await _reusePublishedProxy(mode);
+        if (reused) return reused;
+        const h = await _ephemeralBind(srcPath, mode);
+        L.info("proxy", `ephemeral bind :${h.port} (异族避让 · 柔弱胜刚强)`);
+        return h;
+      } catch (e2) {
+        L.error(
+          "proxy",
+          `ephemeral bind 亦失败: ${e2.message} · 返 null (官方直通)`,
+        );
+        _proxyHealthy = false;
+        return null;
+      }
     }
     throw e;
   }
@@ -707,7 +838,33 @@ function proxyGetMode() {
 // ═══════════════════════════ settings 锚 ═══════════════════════════
 // 双保险: VS Code API (内存) + 直写 settings.json (磁盘持久化)
 // Windsurf 可能拦截 codeium.* 的 API 写入 · 直写文件兜底
+// v9.9.272 · 软编码定位本实例 settings.json · 跨产品名(Windsurf/devin/Devin*)
+// 真因(141实证): 旧版锚死 "Windsurf" · 但 Devin Desktop 用 %APPDATA%\devin\User\
+//   → 写错文件 / 残留陈旧锚点 8937 指向死端口 → 官方推理全断
+// 真治: 由扩展 globalStorageUri 上溯至本实例 User 目录 · 唯变所适
+function _settingsJsonFromCtx() {
+  try {
+    const gs =
+      _extContext &&
+      _extContext.globalStorageUri &&
+      _extContext.globalStorageUri.fsPath;
+    if (!gs) return null;
+    let cur = gs;
+    for (let i = 0; i < 6; i++) {
+      const parent = path.dirname(cur);
+      if (path.basename(cur).toLowerCase() === "globalstorage") {
+        return path.join(parent, "settings.json"); // parent === <userData>/User
+      }
+      if (parent === cur) break;
+      cur = parent;
+    }
+  } catch {}
+  return null;
+}
+
 function _settingsJsonPath() {
+  const ctx = _settingsJsonFromCtx();
+  if (ctx) return ctx;
   const plat = process.platform;
   let base;
   if (plat === "win32") base = process.env.APPDATA;
@@ -740,6 +897,14 @@ function _writeSettingsJson(fp, json) {
 }
 
 async function setAnchor(port) {
+  // ★ v9.9.272 · 失败安全 · 仅当反代确认健康时才锚定 · 否则清锚(还官方直通)
+  if (!_proxyHealthy) {
+    L.warn("anchor", `proxy 不健康 → 拒绝锚定 :${port} · 改为清锚(官方直通 fail-safe)`);
+    try {
+      await clearAnchor();
+    } catch {}
+    return;
+  }
   const url = `http://127.0.0.1:${port}`;
 
   // v9.9.36 · 道法自然 · 损之又损 · 四十八章
@@ -773,6 +938,7 @@ async function setAnchor(port) {
         json["codeium.inferenceApiServerUrl"] = url;
         if (_writeSettingsJson(sp, json)) {
           L.info("anchor", `file set ${url} → ${sp}`);
+          _maybeRestartLS(`anchor → ${url} (收敛 LS 至健康反代)`);
         }
       } else {
         L.warn("anchor", `settings.json unreadable: ${sp}`);
@@ -820,16 +986,27 @@ async function clearAnchor() {
     L.warn("anchor", `API clear fail: ${e.message}`);
   }
 
-  // 方法2: 直写 settings.json
+  // 方法2: 直写 settings.json · v9.9.272 · 真清才重启 LS (收敛官方直通)
   const sp = _settingsJsonPath();
   const json = _readSettingsJson(sp);
   if (json) {
-    delete json["codeium.apiServerUrl"];
-    delete json["codeium.inferenceApiServerUrl"];
-    delete json[BACKUP_KEY_API];
-    delete json[BACKUP_KEY_INFER];
-    _writeSettingsJson(sp, json);
-    L.info("anchor", `file cleared → ${sp}`);
+    let _changed = false;
+    for (const k of [
+      "codeium.apiServerUrl",
+      "codeium.inferenceApiServerUrl",
+      BACKUP_KEY_API,
+      BACKUP_KEY_INFER,
+    ]) {
+      if (k in json) {
+        delete json[k];
+        _changed = true;
+      }
+    }
+    if (_changed) {
+      _writeSettingsJson(sp, json);
+      L.info("anchor", `file cleared → ${sp}`);
+      _maybeRestartLS("anchor cleared → 官方直通");
+    }
   }
 
   _cachedAnchored = false;
@@ -3015,6 +3192,7 @@ function refreshStatusBar() {
 
 function activate(ctx) {
   _activateTs = Date.now();
+  _extContext = ctx;
   try {
     cfg();
     _cachedAnchored = isAnchored();
@@ -3249,7 +3427,12 @@ function activate(ctx) {
       proxyStart(_cachedPort, _cachedMode || "invert")
         .then((handle) => {
           if (!handle) {
-            L.warn("activate", "ACP+HTTP: 端口占且非反代 · watchdog 将重试");
+            L.warn(
+              "activate",
+              "ACP+HTTP: 反代无法绑定 · 清锚还官方(fail-safe) · watchdog 重试",
+            );
+            _proxyHealthy = false;
+            clearAnchor().catch(() => {});
             return;
           }
           proxySetMode(_cachedMode || "invert");
@@ -3284,15 +3467,18 @@ function activate(ctx) {
       proxyStart(_cachedPort, _cachedMode || "invert")
         .then((handle) => {
           if (!handle) {
-            // v9.9.38 · 不清锚 · spawn hook 已无条件重写 · watchdog 后续会重试
+            // v9.9.272 · 失败安全 · 反代无法绑定 → 清锚还官方 · watchdog 重试
             L.warn(
               "activate",
-              "auto-restore: 端口占且非反代 · spawn hook 仍工作 · watchdog 将重试",
+              "auto-restore: 反代无法绑定 · 清锚还官方(fail-safe) · watchdog 将重试",
             );
+            _proxyHealthy = false;
+            clearAnchor().catch(() => {});
             return;
           }
           proxySetMode(_cachedMode || "invert");
-          L.info("activate", "auto-restore done");
+          setAnchor(_cachedPort).catch(() => {});
+          L.info("activate", `auto-restore done · 锚定实际端口 :${_cachedPort}`);
         })
         .catch((e) => {
           L.error("activate", `auto-restore fail: ${e.message}`);
@@ -3320,12 +3506,14 @@ function activate(ctx) {
           return;
         }
         if (!handle) {
-          // v9.9.38 · 不跳过 · spawn hook 已无条件重写 · watchdog 后续会重试
+          // v9.9.272 · 失败安全 · 反代无法绑定 → 清锚还官方 · 不写陈旧锚点
           L.warn(
             "activate",
-            "first-run: 端口占且非反代 · spawn hook 仍工作 · watchdog 将重试",
+            "first-run: 反代无法绑定 · 清锚还官方(fail-safe) · watchdog 将重试",
           );
-          // 仍然设内存锚 + 延迟文件锚 · 确保一致性
+          _proxyHealthy = false;
+          clearAnchor().catch(() => {});
+          return;
         }
         proxySetMode(_cachedMode || "invert");
         // 内存先锚 · spawn hook 立即生效 · 文件延后
@@ -3398,7 +3586,12 @@ function activate(ctx) {
           );
           if (handle) {
             proxySetMode(_cachedMode || "invert");
-            L.info("watchdog", "proxy 复活");
+            setAnchor(_cachedPort).catch(() => {});
+            L.info("watchdog", `proxy 复活 · 锚定 :${_cachedPort}`);
+          } else {
+            L.warn("watchdog", "proxy 重起失败 · 清锚还官方(fail-safe)");
+            _proxyHealthy = false;
+            clearAnchor().catch(() => {});
           }
         } catch (e) {
           L.error("watchdog", `tick err: ${e.message}`);
@@ -4035,16 +4228,27 @@ function getEaConfigHtml(port, nonce) {
   }
 
   // ── 加载配置 · v9.9.266 一站式 overview (与悬浮面板同源) ──
+  // v9.9.272 · 失败安全 · 后端启动期/端口未就绪自动重试 · 不硬报 404
+  //   柔弱胜刚强: 后端不可用时官方模型仍正常 · 面板只提示"启动中"而非"加载失败"
+  var _loadTries = 0;
   function loadConfig() {
     return fJson('/origin/ea/overview').then(function(d) {
       if (!d || !d.ok) throw new Error('overview 未就绪');
+      _loadTries = 0;
       _config = d;
       _providers = d.providers || {};
       _routes = d.routes || {};
       _families = d.official_families || [];
       render();
     }).catch(function(e) {
-      document.getElementById('statusText').textContent = '加载失败: ' + e.message;
+      _loadTries++;
+      var st = document.getElementById('statusText');
+      if (_loadTries <= 20) {
+        if (st) st.textContent = '后端启动中 · 自动重试(' + _loadTries + ')…';
+        setTimeout(loadConfig, 1500);
+      } else if (st) {
+        st.textContent = '后端未就绪 · 官方模型不受影响 (' + e.message + ')';
+      }
     });
   }
 
