@@ -110,7 +110,7 @@ devin-remote/
 
 ### dao-proxy-pro v9.9.283 · 提示词隔离 + 外接路由
 
-底层拦截 IDE AI 请求，隔离替换提示词（道藏规则 + 用户自定义注入），外接第三方模型路由。vendor 目录含 LSP 模拟器、适应性路由、预算控制、三模块面板（49 家模型归一 + 测通）。v9.9.277：修复「渠道配置永远红点」——无 healthCheck 的用户渠道探活返回 `alive:null` 被渲染成红点；探活改为「带 Bearer 鉴权的 /models 探测」（HTTP 200 即绿、自动回填模型），并修复 baseUrl 已含 `/v1` 时模型探测拼成 `/v1/v1/models` 404；前端加 key 即自动探活+拿模型+变绿。
+底层拦截 IDE AI 请求，隔离替换提示词（道藏规则 + 用户自定义注入），外接第三方模型路由。vendor 目录含 LSP 模拟器、适应性路由、预算控制、三模块面板（49 家模型归一 + 测通）。v9.9.277：修复「渠道配置永远红点」——无 healthCheck 的用户渠道探活返回 `alive:null` 被渲染成红点；探活改为「带 Bearer 鉴权的 /models 探测」（HTTP 200 即绿、自动回填模型），并修复 baseUrl 已含 `/v1` 时模型探测拼成 `/v1/v1/models` 404；前端加 key 即自动探活+拿模型+变绿。v9.9.282：兄弟档同渠路由（仅配 swe-1-6-fast 时 swe-1-6-slow 亦走同渠，消除官方 501 回退）。v9.9.283：test-chat 改用与实际处理同源的 `dao_router.resolveRoute()`（共享 `_routes` 表），彻底消除「可路由却误报 route config not found」。
 
 **VSIX**: [⬇ dao-proxy-pro-9.9.283.vsix](https://github.com/zhouyoukang1234-spec/devin-remote/releases/download/v1.0.0/dao-proxy-pro-9.9.283.vsix) · **📹 视频**: [▶ 小白教程（点击直接播放）](https://github.com/user-attachments/assets/7094683e-c9f3-4461-96f6-fadd15c0aabf)
 
@@ -120,6 +120,7 @@ devin-remote/
 
 - **对话备份（批量 + 自动）**：增量 ZIP 备份对话 + `snapshotAccountData` 全量数据快照（知识库/剧本正文 + 密钥/Git/会话/额度元数据全量留底）。快照逐条 `_settle` 重试，一条端点失败不毁整份（`partial`/`errors` 如实标注），批量 12 账号并发实测 12/12。
 - **一键回归本源（wipe）**：先 `backupAccountFull` 本地留底，再清空账号全部用户数据（对话归档 + 知识/剧本/密钥真删 + Git 授权撤销），**保留 Devin 本源默认**（3 内置知识 + 32 社区剧本）。区分「用户数据」与「本源默认」，不误删、不臆造成功。
+- **对话级额度上限（v4.5.0 新）**：每条对话用量上限 = 账号实余 − 缓冲（默认 $3），余额跌破阈值自动停止该号在跑对话；自动清理阈值 $3→$1（先全量备份成功再清，杜绝数据丢失）；额度显示改用 `billingBalance()` 精确到分，与官网一致。
 
 > 实测修复多个「臆造成功」缺陷：剧本/密钥删除端点纠正（`/api/playbooks|secrets/{id}`）、会话改归档（平台不支持硬删）、Git 改用 `git-permissions` 真撤授权（连接元数据平台无删除端点，如实回报）。
 
