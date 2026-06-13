@@ -21,6 +21,11 @@
 
 **一句话**：所有"代码与内核"层面已就绪，唯一卡点是**无人值守地把 daovm 的后台 RDP 会话拉起来并保持渲染**——环回 RDP 在握手阶段失败（reason 1800）。下一个 Agent 的核心任务就是攻克这一关，然后顺着 §5 往下全部能跑通。
 
+> ## ⚠️⚠️ 必读：重大事故 + 安全红线（详见 §10）
+> **2026-06-13 发生过一次严重事故**：141 重启后，登录**主 Windows 账号**弹"**远程过程调用失败 (RPC server unavailable)**"，**进不了桌面**，整机不可用。极可能由本项目的**持久化改动**在重启后触发（登录计划任务自动拉 mstsc 环回 + rdpwrap 对重启后版本不匹配的 termsrv 打补丁 + `fSingleSessionPerUser=0`）。
+> **该事故的隐患可能仍在**（计划任务/补丁未必已清）。**下一个 Agent 上手第一件事：先按 §10 消除复发隐患，再谈推进。**
+> **硬红线**：① 任何会在**开机/登录时自动运行**、且会拉起 mstsc/改 RDP 的东西，**默认禁用**，要测当场手动触发、测完即关；② rdpwrap 补丁**不要长期挂为 ServiceDll**，除非已做"开机自检版本+不匹配则不打"的守护；③ 任何持久化改动前，**先准备好带外恢复路径**（§10 的 4 条还原命令）并告知用户；④ 改动后若要重启验证，**必须用户在场**。
+
 ---
 
 ## 1. 关键坐标与凭据
@@ -190,5 +195,45 @@ POST /record/start {fps=12,monitor=1,name?}   POST /record/stop   GET /record/fi
 
 ---
 
-> 接手顺序建议：§2 跑通驱动 → §3 复核多RDP内存补丁 → §4 攻 reason 1800（先 §3，再读错误框正文，再调握手参数）→ 会话起来后 §5 自动拉 agent → §6 加反代 → 端到端验证鼠标/键盘/截屏/录屏 → 更新 PR。
+## 10. ⚠️ 重大事故复盘：重启后主账号 RPC 失败、进不了桌面（2026-06-13）
+
+### 现象
+141 重启后，登录**主 Windows 账号（Administrator console）**立即弹窗"**远程过程调用失败 / The remote procedure call failed (RPC server is unavailable)**"，**无法进入桌面**，整机不可正常使用。此时 IDE 不会自启 → dao-bridge 隧道是死的 → **远程通道完全失联**（实测旧隧道域名 `getaddrinfo failed`，无法解析）。
+
+### 根因（高度怀疑，按可能性排序）
+本项目为"后台会话/多 RDP"留下的**持久化改动**在重启后自动生效、互相叠加：
+1. **登录触发的计划任务**：`DaoVMConnector`、`DaoVMAgent`（at-logon 触发，以交互/最高权限自动拉起 mstsc 环回连接与 python）。用户登录 console 的瞬间它们就跑，环回 RDP/进程注入与 console 会话争用，最可能直接破坏 shell/RPC 初始化。
+2. **RDP Wrapper 作为 TermService 的 ServiceDll**：rdpwrap 在开机时按 termsrv 二进制版本找 ini 段打补丁。若重启后 termsrv 版本/偏移不匹配，**会话管理器（console 登录也走它）可能异常** → 登录链路 RPC 报错。
+3. **`fSingleSessionPerUser=0`** 等 RDP 注册表改动叠加放大上述不稳定。
+
+> 教训：console 登录与 RDP 会话**共用 termsrv/会话管理器**。任何在登录链路上自动运行、或改动 termsrv 行为的持久化改动，**风险会落到主账号本身**，不只影响"后台会话"。
+
+### 恢复办法（已验证可行 / 本次机器自行恢复）
+**带外恢复（不依赖远程通道，用户在 141 本机操作，全部可逆、不删数据）**：
+- 路线A（不进安全模式）：出错界面 `Ctrl+Shift+Esc` 开任务管理器 →「文件 → 运行新任务」勾选"以管理员权限" → 输入 `cmd` → 执行下面 4 条 → `shutdown /r /t 0`。
+- 路线B（任务管理器都打不开）：强制关机 3 次触发「自动修复」→ 高级选项 → 启动设置 → 重启 → 按 `5` 进带网络安全模式 → 管理员 cmd → 同样 4 条 → 重启。
+
+```bat
+schtasks /Change /TN "DaoVMConnector" /DISABLE
+schtasks /Change /TN "DaoVMAgent" /DISABLE
+reg add "HKLM\SYSTEM\CurrentControlSet\Services\TermService\Parameters" /v ServiceDll /t REG_EXPAND_SZ /d "%SystemRoot%\System32\termsrv.dll" /f
+reg add "HKLM\SYSTEM\CurrentControlSet\Control\Terminal Server" /v fSingleSessionPerUser /t REG_DWORD /d 1 /f
+```
+含义：①② 关掉登录自动任务；③ 把远程桌面服务还原成 Windows 原版 termsrv.dll（撤销 rdpwrap 补丁）；④ 恢复单会话默认。**全部是还原到系统默认**。
+
+### 下一个 Agent 必做（消除复发隐患，第一优先级）
+1. 重新连上 141 后，**先确认上面 4 条改动的现状**：`schtasks /Query /TN DaoVMConnector` /`DaoVMAgent` 是否还在/是否 Disabled；`reg query "HKLM\SYSTEM\CurrentControlSet\Services\TermService\Parameters" /v ServiceDll` 是否仍指向 rdpwrap.dll。
+2. 在**确认稳妥并征得用户同意、用户在场**前，**保持 §10 的还原状态**（任务禁用、ServiceDll=原版 termsrv）。多 RDP 先不要持久挂载。
+3. 若要继续推进多 RDP/后台会话，改用**更安全的形态**：
+   - 多 RDP 补丁**只在需要时临时加载**（手动起、用完卸），不要长期作为 ServiceDll 开机自打；或加"开机自检 termsrv 版本，**不匹配就跳过打补丁**"的守护，避免重启后乱打。
+   - 后台会话拉起**不要用 at-logon 自动任务 + 交互 mstsc**（正是本次祸根）。优先考虑：用户登录后**手动/按需**触发；或彻底换非 RDP 的隔离方案（见 §4 备选）。
+   - 任何持久化改动落地前，**先把 §10 的 4 条还原命令交给用户留底**，并约定一个"用户在场"的窗口做重启验证。
+
+### 关联代码
+- `daovm-up.ps1`（§8）会注册 `DaoVMAgent`；connector 的拨号经 `DaoVMConnector` 任务（§5）。**这两处就是登录自动任务的来源**，整改时从这里下手：把触发器从 at-logon 改为手动，或部署时默认 `-Disabled`。
+
+---
+
+> 接手顺序建议：**§10 先消除复发隐患（确认任务禁用/ServiceDll 还原）** → §2 跑通驱动 → §3 复核多RDP内存补丁 → §4 攻 reason 1800（先 §3，再读错误框正文，再调握手参数）→ 会话起来后 §5 自动拉 agent → §6 加反代 → 端到端验证鼠标/键盘/截屏/录屏 → 更新 PR。
+> 安全第一：console 主账号的可用性高于一切，任何改动都要可逆、有带外恢复路径、重启验证需用户在场。
 > 道法自然，无为而无不为。
