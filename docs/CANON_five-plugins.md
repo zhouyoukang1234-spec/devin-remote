@@ -8,7 +8,7 @@
 
 | # | 插件 | 本质 | 归档目录 | 当前版本 | 状态 |
 |---|------|------|----------|----------|------|
-| 1 | **dao-proxy-pro** | 底层提示词隔离替换 + 外接第三方模型路由进 Windsurf/Cascade | `dao-proxy-pro/` | 9.9.281 | #1–#4 全实现+验证 |
+| 1 | **dao-proxy-pro** | 底层提示词隔离替换 + 外接第三方模型路由进 Windsurf/Cascade | `dao-proxy-pro/` | 9.9.283 | #1–#4 全实现+验证 |
 | 2 | **dao-vsix** | Devin 全功能面板（会话/知识库/Playbook/Secret）+ 路由官网 + 内嵌 git/穿透板块 + 启动注入帛书规则 | `dao-vsix/` | 1.3.2 | 主体完成；官网自动登录待 live 复验 |
 | 3 | **dao-bridge** | 工作区专属内网穿透（随 IDE 启停 + 实时 MD + Cloudflare 隧道） | `dao-bridge-ext/` | 3.2.0 | live E2E 通过；随 IDE 启停 + 命名隧道（稳定 URL）+ local-agent 深度控制 HTTP API |
 | 4 | **devin-git-auth** | 多个 Devin 账号绑定到同一 GitHub 仓库协同 | `devin-git-auth/` | 2.3.2 | 绑定目标态达成；VSIX 已可构建安装；活跃协同待打通 |
