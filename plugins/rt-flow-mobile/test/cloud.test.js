@@ -68,6 +68,89 @@ t("无 quota 记录 → -1", () => {
   assert.strictEqual(scoreOf(undefined), -1);
 });
 
+// classifySession (对话追踪五态 · 与 devin_cloud.js 同源)
+const { classifySession, isActiveClass } = globalThis.DaoCloud;
+console.log("classifySession (对话追踪):");
+t("user_action_required 非空 → awaiting (最高优先)", () => {
+  assert.strictEqual(classifySession({ status: "suspended", latest_status_contents: { user_action_required: { q: 1 } } }), "awaiting");
+});
+t("enum=finished → finished", () => {
+  assert.strictEqual(classifySession({ latest_status_contents: { enum: "finished" } }), "finished");
+});
+t("out_of_quota (非终态) → blocked", () => {
+  assert.strictEqual(classifySession({ status: "running", latest_status_contents: { reason: "out_of_quota" } }), "blocked");
+});
+t("coding/working → running", () => {
+  assert.strictEqual(classifySession({ status: "running", activity_status: "coding" }), "running");
+});
+t("isActiveClass: running/awaiting/blocked 为活跃, finished 非", () => {
+  assert.ok(isActiveClass("running") && isActiveClass("awaiting") && isActiveClass("blocked"));
+  assert.ok(!isActiveClass("finished") && !isActiveClass("idle"));
+});
+
+// 事件流 → 文档 (对话数据下载 · 与 devin_cloud.js 同源)
+const { buildConversationMd, buildAgentDoc, classifyEvent, safeName, knowledgeToMd } = globalThis.DaoCloud;
+console.log("buildConversationMd / 下载文档:");
+t("用户/Devin/思考/工具四类气泡按序渲染", () => {
+  const ev = [
+    { type: "initial_user_message", message: "修个bug", created_at_ms: 1 },
+    { type: "devin_thoughts", message: "先看代码", created_at_ms: 2 },
+    { type: "shell_process_started", command: "npm test", created_at_ms: 3 },
+    { type: "devin_message", message: "已修复", created_at_ms: 4 },
+  ];
+  const md = buildConversationMd("标题", "devin-x", ev);
+  assert.ok(md.includes("# 对话: 标题"));
+  assert.ok(md.includes("👤") && md.includes("修个bug"));
+  assert.ok(md.includes("🤖 Devin") && md.includes("已修复"));
+  assert.ok(md.includes("💭") && md.includes("> 先看代码"));
+  assert.ok(md.includes("npm test"));
+});
+t("classifyEvent: 成功 shell 完成事件不单列 (null)", () => {
+  assert.strictEqual(classifyEvent({ type: "shell_process_completed", exit_code: 0 }), null);
+  assert.ok(classifyEvent({ type: "shell_process_completed", exit_code: 1, output_trunc: "err" }));
+});
+t("buildAgentDoc 为合法 JSON 且含 schema/events", () => {
+  const doc = JSON.parse(buildAgentDoc("t", "devin-y", { a: 1 }, [{ type: "x" }]));
+  assert.strictEqual(doc.schema, "rt-flow.devin-cloud.conversation/1");
+  assert.strictEqual(doc.eventCount, 1);
+});
+t("safeName 清洗非法文件名字符", () => {
+  assert.strictEqual(safeName('a/b:c*?"d'), "a_b_c___d");
+  assert.strictEqual(safeName(""), "untitled");
+});
+t("knowledgeToMd 渲染标题/触发/正文", () => {
+  const md = knowledgeToMd({ name: "K1", trigger: "when X", body: "正文内容" });
+  assert.ok(md.includes("# K1") && md.includes("触发: when X") && md.includes("正文内容"));
+});
+
+// 水过无痕/额度 纯函数
+const { okDelete, computeConvCap, lowBalanceVerdict, sessionSignature } = globalThis.DaoCloud;
+console.log("纯函数 (清理/额度):");
+t("okDelete: 200/202/204/404 皆视为已删 (幂等)", () => {
+  assert.ok(okDelete(200) && okDelete(202) && okDelete(204) && okDelete(404));
+  assert.ok(!okDelete(403) && !okDelete(500));
+});
+t("computeConvCap: 常态 cap=余额-缓冲", () => {
+  assert.deepStrictEqual(computeConvCap(10, 3, false, 0), { cap: 7, drain: false });
+});
+t("computeConvCap: 抽干模式 cap≤0 且 >floor → 反抬回全余额", () => {
+  const r = computeConvCap(2, 3, true, 0.5);
+  assert.ok(r.drain === true && r.cap === 2);
+});
+t("computeConvCap: 见底(≤floor) → cap=0 不抽干", () => {
+  assert.deepStrictEqual(computeConvCap(0.3, 3, true, 0.5), { cap: 0, drain: false });
+});
+t("lowBalanceVerdict: 跌破只警一次, 回升复位", () => {
+  assert.deepStrictEqual(lowBalanceVerdict(2, 5, false), { alert: true, alerted: true });
+  assert.deepStrictEqual(lowBalanceVerdict(2, 5, true), { alert: false, alerted: true });
+  assert.deepStrictEqual(lowBalanceVerdict(9, 5, true), { alert: false, alerted: false });
+});
+t("sessionSignature: 状态字段拼指纹 (无推进则相同)", () => {
+  const a = sessionSignature({ statusClass: "running", status: "x", reason: "r", title: "改名前" });
+  const b = sessionSignature({ statusClass: "running", status: "x", reason: "r", title: "改名后" });
+  assert.strictEqual(a, b);
+});
+
 // login(): user_id 的权威真源是 login 响应本体 (回归防护 —— 修复前 userId 恒空,
 // 因 auth1 是不透明令牌·非 JWT 且 post-auth 不回传 user_id)。mock fetch, 不触网。
 const { login } = globalThis.DaoCloud;

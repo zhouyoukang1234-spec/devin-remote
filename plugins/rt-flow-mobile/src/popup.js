@@ -84,6 +84,8 @@ function render() {
   $("autoSwitch").checked = !!settings.autoSwitch;
   $("buffer").value = settings.buffer != null ? settings.buffer : 3;
   $("pollMin").value = settings.pollMin != null ? settings.pollMin : 2;
+  // pool count
+  $("poolCount").textContent = accounts.length ? "(" + accounts.length + ")" : "";
   // list
   const ul = $("accountList");
   ul.innerHTML = "";
@@ -106,11 +108,43 @@ function render() {
       </div>
       <div class="btns">
         <button data-act="activate" data-email="${escapeAttr(a.email)}">${isActive ? "重注入" : "激活"}</button>
+        <button data-act="overview" data-email="${escapeAttr(a.email)}" class="mini">☁ 概览</button>
         <button data-act="refresh" data-email="${escapeAttr(a.email)}" class="mini">额度</button>
         <button data-act="remove" data-email="${escapeAttr(a.email)}" class="mini">删除</button>
-      </div>`;
+      </div>
+      <div class="ovw hid" data-ovw="${escapeAttr(key)}"></div>`;
     ul.appendChild(li);
   }
+}
+
+function renderCounts(c) {
+  if (!c) return "";
+  return [
+    `<span class="pill run">运行 ${c.running}</span>`,
+    `<span class="pill wait">待输入 ${c.awaiting}</span>`,
+    `<span class="pill blk">卡住 ${c.blocked}</span>`,
+    `<span class="pill">对话 ${c.sessions}</span>`,
+    `<span class="pill">知识库 ${c.knowledge}</span>`,
+    `<span class="pill">剧本 ${c.playbooks}</span>`,
+    `<span class="pill">密钥 ${c.secrets}</span>`,
+    `<span class="pill">Git ${c.gitConnections}</span>`,
+  ].join("");
+}
+const SCLS = { running: "run", awaiting: "wait", blocked: "blk" };
+const SLABEL = { running: "运行", awaiting: "待输入", blocked: "卡住", finished: "完成", idle: "空闲" };
+function sessionLi(s, email) {
+  const cls = SCLS[s.statusClass] || "";
+  const dl = email ? `<button class="sdl" data-dl-sid="${escapeAttr(s.devinId || "")}" data-dl-email="${escapeAttr(email)}" data-dl-title="${escapeAttr(s.title || "")}" title="下载对话">⭳</button>` : "";
+  return `<li class="sess"><span class="dot ${cls}"></span><span class="stitle">${escapeHtml(s.title)}</span><span class="sstat ${cls}">${escapeHtml(SLABEL[s.statusClass] || s.statusClass)}</span>${dl}</li>`;
+}
+
+// 浏览器端「下载」: 文本 → Blob → a[download] 触发 (popup 是扩展页, 可直接下载)
+function downloadText(filename, text, mime) {
+  const blob = new Blob([text], { type: (mime || "text/plain") + ";charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url; a.download = filename; document.body.appendChild(a); a.click();
+  setTimeout(() => { URL.revokeObjectURL(url); a.remove(); }, 1500);
 }
 
 function escapeHtml(s) { return String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c])); }
@@ -129,11 +163,124 @@ document.addEventListener("click", async (e) => {
     } else if (act === "refresh") {
       const r = await send({ type: "refreshQuota", email });
       toast(r.ok ? "额度: " + (r.balance == null ? "$?" : fmtMoney(r.balance)) : "失败: " + (r.error || ""), r.ok ? "ok" : "err");
+    } else if (act === "overview") {
+      const box = document.querySelector(`[data-ovw="${CSS.escape(email.toLowerCase())}"]`);
+      if (box && !box.classList.contains("hid")) { box.classList.add("hid"); btn.disabled = false; return; }
+      if (box) { box.classList.remove("hid"); box.innerHTML = '<div class="loading">概览加载中…</div>'; }
+      const r = await send({ type: "accountOverview", email });
+      if (box) {
+        if (r && r.ok) {
+          const o = r.overview;
+          const kn = o.counts && o.counts.knowledge ? `<button class="mini ghost kndl" data-kn-email="${escapeAttr(email)}">⭳ 知识库下载 (${o.counts.knowledge})</button>` : "";
+          box.innerHTML = `<div class="track-counts">${renderCounts(o.counts)}</div>` +
+            `<ul class="sessions">${(o.sessions || []).slice(0, 20).map((s) => sessionLi(s, email)).join("") || '<li class="sess muted">无对话</li>'}</ul>` +
+            `<div class="ovw-actions">` +
+              (kn || "") +
+              `<button class="mini ghost gitst" data-git-email="${escapeAttr(email)}">🔗 Git 状态</button>` +
+              `<button class="mini ghost gitdc" data-gitdc-email="${escapeAttr(email)}">⛓ 断开 Git</button>` +
+              `<button class="mini danger wipe" data-wipe-email="${escapeAttr(email)}">🧹 水过无痕</button>` +
+            `</div>` +
+            `<div class="git-line" data-git-line="${escapeAttr(email)}"></div>`;
+        } else box.innerHTML = `<div class="err-line">概览失败: ${escapeHtml((r && r.error) || "?")}</div>`;
+      }
+      btn.disabled = false;
+      return; // 不触发 load() 重渲染 (会清空已展开概览)
     } else if (act === "remove") {
       await send({ type: "removeAccount", email });
       toast("已删除: " + email, "ok");
     }
-  } finally { await load(); }
+  } finally { if (act !== "overview") await load(); }
+});
+
+// 下载: 对话数据 (.sdl) / 知识库 (.kndl)
+document.addEventListener("click", async (e) => {
+  const sdl = e.target.closest("button.sdl");
+  if (sdl) {
+    sdl.disabled = true;
+    toast("拉取对话事件流…");
+    const r = await send({ type: "exportConversation", email: sdl.dataset.dlEmail, devinId: sdl.dataset.dlSid, title: sdl.dataset.dlTitle });
+    if (r && r.ok) {
+      downloadText(r.mdName, r.md, "text/markdown");
+      downloadText(r.jsonName, r.json, "application/json");
+      toast(`已下载对话 (${r.eventCount} 事件): MD + JSON`, "ok");
+    } else toast("下载失败: " + ((r && r.error) || ""), "err");
+    sdl.disabled = false;
+    return;
+  }
+  const kndl = e.target.closest("button.kndl");
+  if (kndl) {
+    kndl.disabled = true;
+    toast("拉取知识库…");
+    const r = await send({ type: "exportKnowledge", email: kndl.dataset.knEmail });
+    if (r && r.ok) {
+      downloadText(r.jsonName, r.json, "application/json");
+      for (const it of (r.items || [])) downloadText(it.mdName, it.md, "text/markdown");
+      toast(`已下载知识库 (${r.count} 条): JSON + 逐条 MD`, "ok");
+    } else toast("知识库下载失败: " + ((r && r.error) || ""), "err");
+    kndl.disabled = false;
+    return;
+  }
+  // Git 状态
+  const gitst = e.target.closest("button.gitst");
+  if (gitst) {
+    const email = gitst.dataset.gitEmail;
+    const line = document.querySelector(`[data-git-line="${CSS.escape(email.toLowerCase())}"]`) || document.querySelector(`[data-git-line="${CSS.escape(email)}"]`);
+    gitst.disabled = true;
+    if (line) line.innerHTML = '<span class="muted">查询 Git 状态…</span>';
+    const r = await send({ type: "gitStatus", email });
+    if (line) {
+      if (r && r.ok) { const g = r.git; line.innerHTML = `<span class="muted">身份 <b>${escapeHtml(g.login || "无")}</b> · 连接 ${g.connections} · 仓库 ${g.repoCount} · PAT密钥 ${g.secret ? "✓" : "✗"}</span>`; }
+      else line.innerHTML = `<span class="err-line">${escapeHtml((r && r.error) || "失败")}</span>`;
+    }
+    gitst.disabled = false;
+    return;
+  }
+  // 断开 Git
+  const gitdc = e.target.closest("button.gitdc");
+  if (gitdc) {
+    const email = gitdc.dataset.gitdcEmail;
+    if (!confirm(`断开 ${email} 的全部 Git 连接？(清仓库授权 + 断身份)`)) return;
+    gitdc.disabled = true;
+    toast("断开 Git…");
+    const r = await send({ type: "gitDisconnect", email });
+    toast(r && r.ok ? "已断开 Git (剩余连接 0)" : `断开未净: 剩 ${(r && r.remaining) != null ? r.remaining : "?"}`, r && r.ok ? "ok" : "err");
+    gitdc.disabled = false;
+    return;
+  }
+  // 水过无痕: 先 dryRun 扫描 → 确认 → 执行
+  const wipe = e.target.closest("button.wipe");
+  if (wipe) {
+    const email = wipe.dataset.wipeEmail;
+    wipe.disabled = true;
+    toast("扫描可清理痕迹…");
+    const scan = await send({ type: "wipeAccount", email, dryRun: true });
+    if (!scan || !scan.ok) { toast("扫描失败: " + ((scan && scan.error) || ""), "err"); wipe.disabled = false; return; }
+    const rp = scan.report;
+    const msg = `水过无痕将清理 ${email}:\n对话 ${rp.sessions.found} · 知识库 ${rp.knowledge.found} · 剧本 ${rp.playbooks.found} · 密钥 ${rp.secrets.found}\n(本源默认保留: 知识 ${rp.native.knowledge} 剧本 ${rp.native.playbooks})\n并断开全部 Git 连接。不可恢复，确认执行？`;
+    if (!confirm(msg)) { wipe.disabled = false; return; }
+    toast("执行水过无痕…");
+    const r = await send({ type: "wipeAccount", email, dryRun: false });
+    if (r && r.ok) { const x = r.report; toast(`已清: 对话${x.sessions.deleted} 知识${x.knowledge.deleted} 剧本${x.playbooks.deleted} 密钥${x.secrets.deleted}`, "ok"); }
+    else toast("清理失败: " + ((r && r.error) || ""), "err");
+    wipe.disabled = false;
+    return;
+  }
+});
+
+$("gitBatchBtn").addEventListener("click", async () => {
+  const pat = $("gitPat").value.trim();
+  if (!pat) { toast("先粘贴 GitHub PAT", "err"); return; }
+  if (!STATE.accounts.length) { toast("账号池为空", "err"); return; }
+  if (!confirm(`将该 PAT 连接到全部 ${STATE.accounts.length} 个账号？`)) return;
+  const btn = $("gitBatchBtn");
+  btn.disabled = true; btn.textContent = "连接中…";
+  const r = await send({ type: "gitBatchConnectPat", pat }, 40);
+  const box = $("gitBatchResult");
+  if (r && r.ok) {
+    box.innerHTML = r.results.map((x) => `<div class="gitres-row ${x.ok ? "ok" : "err"}">${x.ok ? "✓" : "✗"} ${escapeHtml(x.email)}${x.ok ? ` · @${escapeHtml(x.login || "?")} · 仓库 ${x.repoCount}` : " · " + escapeHtml((x.error || "").slice(0, 60))}</div>`).join("");
+    toast(`批量归一: ${r.succeeded}/${r.total} 成功`, r.succeeded ? "ok" : "err");
+  } else { box.innerHTML = `<div class="gitres-row err">批量连接失败: ${escapeHtml((r && r.error) || "?")}</div>`; toast("批量连接失败", "err"); }
+  btn.disabled = false; btn.textContent = "🔗 批量连接全部账号";
 });
 
 $("addBtn").addEventListener("click", async () => {
@@ -170,5 +317,40 @@ $("saveSettings").addEventListener("click", async () => {
   toast(r.ok ? "设置已保存" : "保存失败", r.ok ? "ok" : "err");
 });
 $("autoSwitch").addEventListener("change", () => $("saveSettings").click());
+
+// 万法识别·批量添加: 任意格式文本 → 解析入池
+$("bulkAddBtn").addEventListener("click", async () => {
+  const text = $("bulk").value;
+  if (!text.trim()) { toast("先粘贴账号文本", "err"); return; }
+  const r = await send({ type: "parseAndAdd", text });
+  if (r && r.ok) {
+    $("bulk").value = "";
+    toast(`识别 ${r.parsed} 个 · 新增 ${r.added} · 更新 ${r.updated}` + (r.tokens ? ` · token ${r.tokens}` : ""), r.parsed ? "ok" : "err");
+    await load();
+  } else toast("识别失败: " + ((r && r.error) || ""), "err");
+});
+
+// 一键导出: 账号池 → 剪贴板 (可再粘贴回收)
+$("exportBtn").addEventListener("click", async () => {
+  const r = await send({ type: "exportAccounts" });
+  if (!r || !r.ok || !r.text) { toast("无可导出账号", "err"); return; }
+  try { await navigator.clipboard.writeText(r.text); toast("已复制到剪贴板 (" + r.text.split("\n").length + " 个)", "ok"); }
+  catch { $("bulk").value = r.text; toast("已填入下方文本框 (剪贴板不可用)", "ok"); }
+});
+
+// 对话追踪: 拉取当前激活账号的活跃会话
+$("trackRefresh").addEventListener("click", async () => {
+  const list = $("trackList"), counts = $("trackCounts"), empty = $("trackEmpty");
+  if (!STATE.active) { toast("先激活一个账号", "err"); return; }
+  empty.classList.add("hid"); counts.innerHTML = ""; list.innerHTML = '<li class="sess muted">追踪中…</li>';
+  const r = await send({ type: "runningSessions" });
+  if (r && r.ok) {
+    const ss = r.sessions || [];
+    const c = { running: 0, awaiting: 0, blocked: 0 };
+    for (const s of ss) if (c[s.statusClass] != null) c[s.statusClass]++;
+    counts.innerHTML = `<span class="pill run">运行 ${c.running}</span><span class="pill wait">待输入 ${c.awaiting}</span><span class="pill blk">卡住 ${c.blocked}</span>`;
+    list.innerHTML = ss.length ? ss.map(sessionLi).join("") : '<li class="sess muted">无活跃对话 (运行/待输入/卡住)</li>';
+  } else { list.innerHTML = ""; empty.classList.remove("hid"); toast("追踪失败: " + ((r && r.error) || ""), "err"); }
+});
 
 load();
