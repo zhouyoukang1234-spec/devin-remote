@@ -461,6 +461,9 @@ async function _stubToCascade(res, w, modelUid, messages, tools, isJSON) {
 function _humanUpstreamError(status, provider, bodySnippet) {
   const _p = provider ? `渠道「${provider}」` : "上游渠道";
   const _tail = bodySnippet ? `\n\n上游原文: ${String(bodySnippet).slice(0, 300)}` : "";
+  if (!status) {
+    return `⚠️ ${_p} 连接中断 · 上游/代理在返回首字节前断开 (${bodySnippet ? String(bodySnippet).slice(0, 120) : "socket hang up / TLS 断开"})。\n\n已自动重试仍失败。多见于: 请求体过大(工具+历史)、本地代理不稳、或上游过载。\n\n建议: ① 稍后重试; ② 检查本地代理稳定性; ③ 精简上下文 / 减少同时启用的工具以缩小请求体; ④ 新开对话缩短历史。`;
+  }
   if (status === 413) {
     return `⚠️ ${_p} 拒绝请求 (HTTP 413 · 请求体过大)。\n\n该渠道对单次输入有 token 上限 (如 GitHub Models 免费层约 8000 token)，而当前请求(系统提示 + 工具定义 + 对话历史)已超限。\n\n建议: ① 换用额度更高的渠道; ② 精简上下文 / 减少同时启用的工具; ③ 新开对话以缩短历史。${_tail}`;
   }
@@ -1802,8 +1805,21 @@ async function _tryRoute({
     }
   }
 
+  // ★ v9.9.291 · 道法自然 · 输出前连接级重试 (cc-switch 风健壮)
+  //   实证(179实机): "socket hang up" / "before secure TLS connection" /
+  //   "socket disconnected" 等上游/代理在出字节前断连 → 旧逻辑直接 ALL-FAIL ·
+  //   且 catch 路径未置 _lastErr → 连可读错误都不回传 → "对话突然中断"(静默死亡)。
+  //   仅 headersSent=false 时重试 (未发任何字节 · 安全幂等);
+  //   一旦 writeHead(200) 已发则不再重试 (中途断流交由优雅 STOP_END 善后)。
+  const _CONN_RETRY_MAX = 3;
+  const _RETRYABLE_ERR =
+    /socket hang up|ECONNRESET|ETIMEDOUT|EPIPE|EAI_AGAIN|ENOTFOUND|ECONNREFUSED|before secure TLS|socket disconnected|premature close|network socket|aborted|timeout/i;
+  const _RETRYABLE_STATUS = new Set([
+    408, 425, 429, 500, 502, 503, 504, 520, 522, 524,
+  ]);
   _log(`[dao-router] ${tag}[→] ${modelUid} → ${target.provider}/${sendModel}`);
-  try {
+  for (let _attempt = 0; _attempt <= _CONN_RETRY_MAX; _attempt++) {
+   try {
     const agRes = await _callProvider(
       provCfg,
       target.provider,
@@ -1827,6 +1843,19 @@ async function _tryRoute({
       );
       if (isPrimary && agRes.statusCode >= 500) {
         _healthCache[target.provider] = { alive: false, ts: Date.now() };
+      }
+      // ★ v9.9.291 · 输出前 · 瞬时上游错误 (429/5xx/网关类) → 退避重试
+      if (
+        !res.headersSent &&
+        _attempt < _CONN_RETRY_MAX &&
+        _RETRYABLE_STATUS.has(agRes.statusCode)
+      ) {
+        const _ms = 400 * Math.pow(2, _attempt);
+        _routeDiag(
+          `_tryRoute ${tag} 连接级重试 #${_attempt + 1}/${_CONN_RETRY_MAX} (HTTP ${agRes.statusCode}) 退避${_ms}ms model=${sendModel}`,
+        );
+        await new Promise((r) => setTimeout(r, _ms));
+        continue;
       }
       // ★ v9.9.288 · 记录上游错误 · 供 route() ALL-FAIL 时可读回传 Cascade
       if (callOpts) {
@@ -2111,8 +2140,39 @@ async function _tryRoute({
     if (isPrimary && e.message.includes("ECONNREFUSED")) {
       _healthCache[target.provider] = { alive: false, ts: Date.now() };
     }
+    // ★ v9.9.291 · 输出前 · 瞬时连接错误 → 退避重试 (未发任何字节 · 安全)
+    if (
+      !res.headersSent &&
+      _attempt < _CONN_RETRY_MAX &&
+      _RETRYABLE_ERR.test(e.message || "")
+    ) {
+      const _ms = 400 * Math.pow(2, _attempt);
+      _routeDiag(
+        `_tryRoute ${tag} 连接级重试 #${_attempt + 1}/${_CONN_RETRY_MAX} (${(e.message || "").slice(0, 60)}) 退避${_ms}ms model=${sendModel}`,
+      );
+      await new Promise((r) => setTimeout(r, _ms));
+      continue;
+    }
+    // ★ v9.9.291 · 重试耗尽/不可重试 · 置 _lastErr 使 route() 可读回传 (不再静默死亡)
+    if (callOpts && !callOpts._lastErr) {
+      callOpts._lastErr = {
+        status: 0,
+        provider: target.provider,
+        body: (e.message || "连接中断").slice(0, 300),
+      };
+    }
     return false;
+   }
   }
+  // ★ v9.9.291 · 连接级重试全部耗尽 · 兜底置 _lastErr
+  if (callOpts && !callOpts._lastErr) {
+    callOpts._lastErr = {
+      status: 0,
+      provider: target.provider,
+      body: "连接级重试耗尽 (socket hang up / TLS 断开)",
+    };
+  }
+  return false;
 }
 
 /**
