@@ -4415,6 +4415,8 @@ function _isModelUnlockEnabled() {
 //   零依赖 protobuf 改写: 仅丢弃含徽标之 field 33 · 余皆原样回灌
 // ═══════════════════════════════════════════════════════════
 const _PRO_BADGE = Buffer.from("Upgrade to Pro");
+// ★ v9.9.294 · 账号层级串 · 顶层 field2(账号块) 内 field2 = 'Free' → 翻 'Pro'
+const _FREE_TIER = Buffer.from("Free");
 const _unlockStats = { calls: 0, dropped_total: 0, last_dropped: 0, unlock4_total: 0, last_unlock4: 0, last_at: 0, last_bytes: "" };
 function _pbReadVarint(buf, i) {
   let shift = 0,
@@ -4866,7 +4868,7 @@ function _isCatalogInjectEnabled() {
     const v = fs.readFileSync(_INJECT_CATALOG_FILE, "utf8").trim();
     return v !== "0" && v !== "false" && v !== "disabled";
   } catch {
-    return true; // 默认启用
+    return false; // ★ v9.9.294 · 默认禁用强制注入 · 顺其自然·改账号权限而非注入幻影模型
   }
 }
 // 静态全量目录 → 注入所需四元组 {uid,label,famUid,famLabel}
@@ -4929,6 +4931,92 @@ function _pbCloneSwapStrings(buf, map) {
   return Buffer.concat(out);
 }
 
+// ═══════════════════════════════════════════════════════════
+// ★ v9.9.294 · 账号层级翻转 · 改权限而非注入 · 水善利万物而有静·顺其自然
+//   云端本已下发全部 69 模型(其中 64 带 Pro 锁徽标·仅 5 个 Free 可见)
+//   Pro 账号即见全部 → 故翻账号层级(Free→Pro) + 去 Pro 徽标(既有) = 等同 Pro 待遇
+//   仅改顶层 field2(账号块)内之 field2 层级串 · 不动模型列表(顶层 field1)
+//   不可解/校验不过 → 原样返回 (利而不害)
+// ═══════════════════════════════════════════════════════════
+function _flipAccountBlock(buf, stats) {
+  const out = [];
+  let i = 0;
+  const n = buf.length;
+  while (i < n) {
+    let tag;
+    [tag, i] = _pbReadVarint(buf, i);
+    const field = tag >> 3;
+    const wt = tag & 7;
+    if (wt === 0) {
+      let v;
+      [v, i] = _pbReadVarint(buf, i);
+      out.push(_pbTag(field, 0), _pbEncVarint(v));
+    } else if (wt === 2) {
+      let ln;
+      [ln, i] = _pbReadVarint(buf, i);
+      const sub = buf.slice(i, i + ln);
+      i += ln;
+      if (field === 2 && ln < 16 && sub.toString("utf8") === "Free") {
+        const rep = Buffer.from("Pro", "utf8");
+        out.push(_pbTag(field, 2), _pbEncVarint(rep.length), rep);
+        if (stats) stats.tierFlipped = true;
+      } else {
+        out.push(_pbTag(field, 2), _pbEncVarint(sub.length), sub);
+      }
+    } else if (wt === 5) {
+      out.push(_pbTag(field, 5), buf.slice(i, i + 4));
+      i += 4;
+    } else if (wt === 1) {
+      out.push(_pbTag(field, 1), buf.slice(i, i + 8));
+      i += 8;
+    } else {
+      return buf;
+    }
+  }
+  return Buffer.concat(out);
+}
+// 顶层只改账号块(含 'Free' 之 field2) · 模型列表(field1)原样过
+function _flipAccountTier(data, stats) {
+  try {
+    const out = [];
+    let i = 0;
+    const n = data.length;
+    while (i < n) {
+      let tag;
+      [tag, i] = _pbReadVarint(data, i);
+      const field = tag >> 3;
+      const wt = tag & 7;
+      if (wt === 0) {
+        let v;
+        [v, i] = _pbReadVarint(data, i);
+        out.push(_pbTag(field, 0), _pbEncVarint(v));
+      } else if (wt === 2) {
+        let ln;
+        [ln, i] = _pbReadVarint(data, i);
+        const sub = data.slice(i, i + ln);
+        i += ln;
+        if (field === 2 && sub.indexOf(_FREE_TIER) >= 0) {
+          const flipped = _flipAccountBlock(sub, stats);
+          out.push(_pbTag(field, 2), _pbEncVarint(flipped.length), flipped);
+        } else {
+          out.push(_pbTag(field, 2), _pbEncVarint(sub.length), sub);
+        }
+      } else if (wt === 5) {
+        out.push(_pbTag(field, 5), data.slice(i, i + 4));
+        i += 4;
+      } else if (wt === 1) {
+        out.push(_pbTag(field, 1), data.slice(i, i + 8));
+        i += 8;
+      } else {
+        return data;
+      }
+    }
+    const res = Buffer.concat(out);
+    return _pbParseOk(res) ? res : data;
+  } catch {
+    return data;
+  }
+}
 // 入口: 对 gzip(proto) GetUserStatus body 做真解锁 · 失败则原样返回 (利而不害)
 function _unlockUserStatusBody(bodyBuf, contentEncoding, rid) {
   try {
@@ -4987,6 +5075,8 @@ function _unlockUserStatusBody(bodyBuf, contentEncoding, rid) {
     } catch (e) {
       log(`#${rid} [全量注入] 异常→回退基线: ${e.message}`);
     }
+    // ★ v9.9.294 · 账号层级翻转 Free→Pro · 改权限令 IDE 视为 Pro · 与去徽标合·见全部模型
+    out = _flipAccountTier(out, stats);
     const finalBuf = isGz ? zlib.gzipSync(out) : out;
     _unlockStats.calls += 1;
     _unlockStats.dropped_total += stats.dropped;
@@ -4997,7 +5087,7 @@ function _unlockUserStatusBody(bodyBuf, contentEncoding, rid) {
     _unlockStats.last_at = Date.now();
     _unlockStats.last_bytes = `${data.length}->${out.length} gz ${bodyBuf.length}->${finalBuf.length}`;
     log(
-      `#${rid} [真解锁] GetUserStatus 去 Pro锁(field4) ${stats.unlock4} 项 + 去徽标 ${stats.dropped} 项 + 注入全量 ${injectedCount} 项 · ${data.length}→${out.length}B (gz ${bodyBuf.length}→${finalBuf.length})`,
+      `#${rid} [真解锁] GetUserStatus 去 Pro锁(field4) ${stats.unlock4} 项 + 去徽标 ${stats.dropped} 项 + 注入 ${injectedCount} 项 + 层级翻转 ${stats.tierFlipped ? "Free→Pro" : "无"} · ${data.length}→${out.length}B (gz ${bodyBuf.length}→${finalBuf.length})`,
     );
     return finalBuf;
   } catch (e) {
@@ -5378,6 +5468,7 @@ function proxyToCloud(req, res, overrideBody, _rid) {
         const _ctU = (h2resHeaders && h2resHeaders["content-type"]) || "";
         const _ceU = (h2resHeaders && h2resHeaders["content-encoding"]) || "";
         if (
+          _DAO_API_ENABLED &&
           _isModelUnlockEnabled() &&
           status === 200 &&
           /GetUserStatus/i.test(_rpcPathU) &&
