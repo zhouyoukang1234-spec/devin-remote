@@ -3592,6 +3592,7 @@ function handleControl(req, res) {
         seen_models: models, // 兼容旧前端
         official_families: _getOfficialFamilies(), // ★ v9.9.265 · 左侧全量官方·档位归一
         families_source: _officialFamiliesSource(), // ★ v9.9.270 · live=右侧实捕·static=静态目录
+        dao_api_enabled: _DAO_API_ENABLED, // ★ v9.9.293 · 外接API全局热开关
         live_models_at: _liveModelCapture.at || 0,
         live_models_count: (_liveModelCapture.models || []).length,
         providers: safe,
@@ -4064,6 +4065,37 @@ function handleControl(req, res) {
     return true;
   }
 
+  // ★ v9.9.293 · 外接API全局热开关 · GET/POST /origin/dao-api
+  if (u.pathname === "/origin/dao-api" && req.method === "GET") {
+    _DAO_API_ENABLED = _loadDaoApiEnabled();
+    res.end(JSON.stringify({ ok: true, enabled: _DAO_API_ENABLED }));
+    return true;
+  }
+  if (u.pathname === "/origin/dao-api" && req.method === "POST") {
+    let body = "";
+    req.on("data", (c) => {
+      body += c;
+    });
+    req.on("end", () => {
+      try {
+        const params = JSON.parse(body);
+        _DAO_API_ENABLED = params.enabled !== false;
+        fs.writeFileSync(
+          _DAO_API_ENABLED_FILE,
+          _DAO_API_ENABLED ? "1" : "0",
+          "utf8",
+        );
+        log(
+          `[dao-api] 外接API全局开关 → ${_DAO_API_ENABLED ? "启用 (外接API+模型注入)" : "禁用 (回退官方原始)"}`,
+        );
+        res.end(JSON.stringify({ ok: true, enabled: _DAO_API_ENABLED }));
+      } catch (e) {
+        res.end(JSON.stringify({ ok: false, error: e.message }));
+      }
+    });
+    return true;
+  }
+
   return false;
 }
 
@@ -4090,6 +4122,23 @@ const _MODEL_UNLOCK_ENABLED_FILE = path.join(
   __dirname,
   "_model_unlock_enabled",
 );
+
+// ═══════════════════════════════════════════════════════════
+// ★ v9.9.293 · 外接API全局热开关 · 为而无以为 · 一键回退官方
+//   开=默认: 外接API路由+模型注入+全量解锁 皆活
+//   关: 全部走官方原始渠道(等同 proxy-mini 9964), DTS(隔离替换SP)保留
+//   运行时热切换 · 不需重载 · 文件 _dao_api_enabled.txt 持久 (默认启用)
+// ═══════════════════════════════════════════════════════════
+const _DAO_API_ENABLED_FILE = path.join(__dirname, "_dao_api_enabled.txt");
+function _loadDaoApiEnabled() {
+  try {
+    const v = fs.readFileSync(_DAO_API_ENABLED_FILE, "utf8").trim();
+    return v !== "0" && v !== "false" && v !== "disabled";
+  } catch {
+    return true;
+  }
+}
+let _DAO_API_ENABLED = _loadDaoApiEnabled();
 
 function _loadFullModelCatalog() {
   try {
@@ -5561,8 +5610,13 @@ const _mainHandler = async (req, res) => {
     // ★ v9.9.260 · 模型解锁 · 反者道之动 · 执大象 天下往
     //   GetUserSettings 响应注入全量模型目录 · 突破账号权限限制
     //   道义: 三十五章「执大象 天下往 往而不害 安平太」
+    //   ★ v9.9.293 · 全局开关关闭时跳过模型注入 → 回退官方原始模型列表
     if (kind === "MODEL_UNLOCK") {
-      proxyToCloudWithModelUnlock(req, res, rid);
+      if (_DAO_API_ENABLED) {
+        proxyToCloudWithModelUnlock(req, res, rid);
+      } else {
+        proxyToCloud(req, res, undefined, rid);
+      }
       return;
     }
 
@@ -5590,6 +5644,14 @@ const _mainHandler = async (req, res) => {
       if (_freshMode && _freshMode !== SP_MODE) {
         log(`#${rid} [模式热更] ${SP_MODE} → ${_freshMode}`);
         SP_MODE = _freshMode;
+      }
+    }
+    // ★ v9.9.293 · 外接API全局开关热读 · 文件手改亦即时生效
+    {
+      const _freshApi = _loadDaoApiEnabled();
+      if (_freshApi !== _DAO_API_ENABLED) {
+        log(`#${rid} [dao-api热更] ${_DAO_API_ENABLED} → ${_freshApi}`);
+        _DAO_API_ENABLED = _freshApi;
       }
     }
 
@@ -5642,8 +5704,9 @@ const _mainHandler = async (req, res) => {
     //   修正: 始终调用 → _eaHotReload 内部判断 !_ea + 冷却 → 自动恢复
     //   道义: 大制无割 · 有无相生 · 失败亦当有恢复之路
     _eaHotReload();
-    _eaDiag("#" + rid + " routing-check: _ea=" + !!_ea + " kind=" + kind);
-    if (_ea && (kind === "CHAT_PROTO" || kind === "CHAT_RAW")) {
+    _eaDiag("#" + rid + " routing-check: _ea=" + !!_ea + " kind=" + kind + " dao_api=" + _DAO_API_ENABLED);
+    // ★ v9.9.293 · 全局开关关闭时跳过外接API路由 → 全部走官方 (DTS保留)
+    if (_DAO_API_ENABLED && _ea && (kind === "CHAT_PROTO" || kind === "CHAT_RAW")) {
       try {
         const _eaRouter = _ea.getRouter();
         _eaDiag(

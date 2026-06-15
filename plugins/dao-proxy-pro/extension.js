@@ -4139,6 +4139,8 @@ function getEaConfigHtml(port, nonce) {
     <button class="dao-tab active" data-pane="paneEssence">① 本源观照</button>
     <button class="dao-tab" data-pane="paneProvider">② 渠道配置</button>
     <button class="dao-tab" data-pane="paneRouter">③ 模型路由</button>
+    <span style="flex:1"></span>
+    <button id="daoApiToggle" class="btn" title="外接API全局开关 · 关闭后回退官方原始状态(DTS保留) · 开启后恢复外接API+模型注入" style="padding:3px 10px;font-size:11px;font-weight:600;border-radius:12px;min-width:90px;text-align:center;transition:all 0.2s">⏳ 加载中</button>
   </div>
 
   <!-- ① 本源观照 (IDE 左侧复刻 · 道/官/编 + 经文 + 本源体池 · 与左侧完全一致) -->
@@ -4308,6 +4310,43 @@ function getEaConfigHtml(port, nonce) {
       _ordRightMod = (s.rm && typeof s.rm === 'object') ? s.rm : {};
     } catch (e) {}
   })();
+  // ★ v9.9.293 · 外接API全局热开关 (前端)
+  var _daoApiEnabled = true;
+  var _daoApiToggleEl = document.getElementById('daoApiToggle');
+  function _updateToggleUI() {
+    if (!_daoApiToggleEl) return;
+    if (_daoApiEnabled) {
+      _daoApiToggleEl.textContent = '🟢 外接API 已启用';
+      _daoApiToggleEl.style.borderColor = '#6bb86b';
+      _daoApiToggleEl.style.color = '#6bb86b';
+      _daoApiToggleEl.style.background = 'rgba(107,184,107,0.14)';
+    } else {
+      _daoApiToggleEl.textContent = '🔴 外接API 已关闭';
+      _daoApiToggleEl.style.borderColor = '#e08080';
+      _daoApiToggleEl.style.color = '#e08080';
+      _daoApiToggleEl.style.background = 'rgba(224,128,128,0.14)';
+    }
+  }
+  function _fetchDaoApiStatus() {
+    fJson('/origin/dao-api').then(function(d) {
+      _daoApiEnabled = !!d.enabled;
+      _updateToggleUI();
+    }).catch(function() {});
+  }
+  if (_daoApiToggleEl) {
+    _daoApiToggleEl.addEventListener('click', function() {
+      var next = !_daoApiEnabled;
+      _daoApiToggleEl.textContent = '⏳ ...';
+      fPost('/origin/dao-api', { enabled: next }).then(function(d) {
+        _daoApiEnabled = !!d.enabled;
+        _updateToggleUI();
+      }).catch(function() {
+        _updateToggleUI();
+      });
+    });
+  }
+  _fetchDaoApiStatus();
+
   function _saveOrderPrefs() {
     try {
       localStorage.setItem('dao.router.order', JSON.stringify({
