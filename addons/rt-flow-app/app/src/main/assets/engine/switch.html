@@ -29,8 +29,8 @@ body{font:12px/1.5 -apple-system,'Segoe UI',sans-serif;background:var(--bg);colo
 .add-body .add-actions button{background:var(--btn);color:#fff;border:none;padding:4px 12px;border-radius:4px;cursor:pointer;font-size:11px}
 .add-body .add-hint{font-size:10px;color:#555;margin-top:4px}
 .sec{display:flex;justify-content:space-between;align-items:center;color:#777;font-size:11px;margin:8px 0 3px;padding-bottom:3px;border-bottom:1px solid var(--border)}
-.row{display:flex;align-items:center;padding:3px 2px;border-bottom:1px solid #1a1a1a;gap:4px;user-select:none}
-.row:hover{background:#2a2d2e}
+.row{display:flex;align-items:center;padding:3px 2px;border-bottom:1px solid #1a1a1a;gap:4px;user-select:none;flex-wrap:wrap;cursor:pointer}
+.row:hover,.row:active{background:#2a2d2e}
 .row.sel{background:#1f3a45;box-shadow:inset 2px 0 0 var(--blue)}
 .row.sel:hover{background:#254655}
 .row.act{background:#264f7844;border-left:2px solid var(--blue)}
@@ -51,11 +51,7 @@ body{font:12px/1.5 -apple-system,'Segoe UI',sans-serif;background:var(--bg);colo
 .uc{font-size:9px;background:#333;color:#888;padding:0 4px;border-radius:3px}
 .plan-tag{font-size:9px;background:#1a3a1a;color:var(--blue);padding:0 4px;border-radius:3px}
 .days{font-size:9px;color:#666;min-width:32px;display:inline-block;text-align:center;flex-shrink:0}
-.qt{display:flex;align-items:center;gap:2px;flex-shrink:0;min-width:80px}
-.mb{width:18px;height:4px;background:#252525;border-radius:2px;overflow:hidden}
-.mf{display:block;height:100%}
-.ql{font-size:10px;font-weight:600;width:26px;text-align:right}
-.acts{display:flex;gap:2px}
+.acts{display:flex;gap:2px;flex-wrap:wrap}
 .b{width:20px;height:20px;border:none;border-radius:3px;cursor:pointer;font-size:11px;display:flex;align-items:center;justify-content:center;padding:0}
 .b.sw{background:var(--btn);color:#fff}.b.sw:hover{background:var(--btn-h)}
 .b.dv{background:#1e3a4a;color:#9cdcfe;width:auto;padding:0 3px;font-size:10px}.b.dv:hover{background:#2a4a5a}
@@ -115,25 +111,40 @@ body{font:12px/1.5 -apple-system,'Segoe UI',sans-serif;background:var(--bg);colo
 .relay-cfg input{width:100%;background:var(--input-bg);border:1px solid var(--input-border);color:#ccc;padding:4px 8px;border-radius:4px;font-size:11px;outline:none;margin:3px 0}
 .relay-cfg label{font-size:10px;color:#888;display:block;margin-top:4px}
 /* 手机微调 */
-.b{width:26px!important;height:26px!important;font-size:13px!important}
-.b.dv{width:auto!important;padding:0 5px!important}
-.row{padding:6px 2px!important}
-.chk{width:16px!important;height:16px!important}
+.b{width:28px!important;height:28px!important;font-size:14px!important}
+.b.dv{width:auto!important;padding:0 6px!important;font-size:11px!important}
+.row{padding:8px 4px!important}
+.chk{width:18px!important;height:18px!important}
+.acc-no{min-width:20px!important;height:20px!important;line-height:20px!important;font-size:11px!important;font-weight:800!important}
+.em{font-size:13px!important;font-weight:600!important;color:#e8ecf0!important}
+.acts{margin-left:auto}
+/* 备份管理面板 */
+.bk-panel{margin:6px 0;border:1px solid var(--border);border-radius:6px;overflow:hidden}
+.bk-panel .bk-h{background:#1a1a1a;padding:4px 8px;font-size:11px;color:#888;cursor:pointer;display:flex;justify-content:space-between}
+.bk-panel .bk-body{padding:6px 8px;display:none;max-height:300px;overflow:auto}.bk-panel .bk-body.open{display:block}
+.bk-item{padding:4px;border-bottom:1px solid #1a2226;display:flex;align-items:center;gap:6px}
+.bk-item .bk-title{flex:1;font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.bk-item .bk-meta{font-size:9px;color:#666}
+/* 下载管理悬浮 */
+.dl-float{position:fixed;bottom:40px;right:8px;width:260px;max-height:200px;background:#161b22;border:1px solid var(--border);border-radius:8px;box-shadow:0 4px 12px #000a;overflow:auto;z-index:90;display:none}
+.dl-float.open{display:block}
+.dl-float .dl-h{padding:4px 8px;font-size:10px;color:#888;border-bottom:1px solid var(--border);display:flex;justify-content:space-between}
+.dl-float .dl-item{padding:4px 8px;font-size:11px;border-bottom:1px solid #1a2226;display:flex;gap:4px;align-items:center}
+.dl-float .dl-item .dl-name{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#cdd}
 @media (orientation:landscape){
   body{padding:8px 16px}
-  .em{font-size:12px}
+  .em{font-size:14px!important}
   .dv-tb{gap:8px}
+  .row{gap:6px!important}
 }
 </style></head><body>
 <div class="hd">
 <div class="st">
-  <span style="color:var(--pool);font-weight:700" id="st-dw">D— W—</span>
-  <span><b id="st-avail">0</b>可用</span>
-  <span><b id="st-cnt">0</b>号</span>
-  <span style="color:var(--blue)"><b id="st-tok">0</b>已登</span>
+  <span><b id="st-cnt">0</b> 号</span>
+  <span style="color:var(--blue)"><b id="st-tok">0</b> 已登</span>
+  <span><b id="st-avail">0</b> 可注入</span>
 </div>
-<div class="pool-bar"><div class="pool-fill" id="poolFill" style="width:100%"></div></div>
-<div class="act-info empty" id="actInfo">点 ⚡ 或 🖥 打开某账号的注入浏览器 (即切号)</div>
+<div class="act-info empty" id="actInfo">点击账号行即可打开注入浏览器 (切号)</div>
 </div>
 
 <!-- 穿透配置 (动态, 非固定) -->
@@ -169,6 +180,25 @@ body{font:12px/1.5 -apple-system,'Segoe UI',sans-serif;background:var(--bg);colo
 <button onclick="doTrack()" class="conv-btn" title="对话追踪">👀 对话追踪</button>
 </div>
 <div id="list"></div>
+
+<!-- 备份管理面板 (映射 dao-vsix backups panel) -->
+<div class="bk-panel">
+<div class="bk-h" onclick="toggleBackup()"><span>📦 备份管理</span><span id="bkArrow">▼</span></div>
+<div class="bk-body" id="bkBody">
+<div id="bkContent" style="color:#666">点击刷新加载备份数据</div>
+<div class="add-actions" style="margin-top:4px">
+  <button onclick="loadBackups()">⟳ 刷新</button>
+  <button onclick="clearBackups()" style="background:#3a1a1a;color:#f44">清空本地备份</button>
+</div>
+</div></div>
+
+<!-- 下载管理悬浮窗 -->
+<div class="dl-float" id="dlFloat">
+<div class="dl-h"><span>📥 下载管理</span><button onclick="toggleDl()" style="background:none;border:none;color:#888;cursor:pointer">✕</button></div>
+<div id="dlList"></div>
+</div>
+<button onclick="toggleDl()" style="position:fixed;bottom:8px;right:8px;background:#16232c;color:#9cdcfe;border:1px solid #244;border-radius:50%;width:32px;height:32px;font-size:16px;cursor:pointer;z-index:89;display:flex;align-items:center;justify-content:center" title="下载管理">📥</button>
+
 <div class="footer">Devin Cloud 手机版 · <span class="v">v0.7.0</span> · 道法自然</div>
 <div class="toast" id="toast"></div>
 
@@ -195,49 +225,37 @@ function domBadge(email){
   return ["o","token"];
 }
 
-// ── 行渲染 (1:1 桌面 RT Flow row) ──
+// ── 行渲染 (化简: 去DW, 去sw, 行点击=切号, 突出编号+账号名) ──
 function rowHtml(a,i){
   var active = (a.id===getActive());
   var auth = hasAuth(a);
   var db = domBadge(a.email);
   var emailShort = String(a.email||a.id||("acc"+i));
-  if(emailShort.length>28) emailShort = emailShort.slice(0,26)+"…";
-  var q = a.quota||{}; var checked = (typeof q.dPct==="number");
-  var dPct = checked?q.dPct:0, wPct = checked?q.wPct:0;
-  var dC = !checked?"#555":(dPct<=5?"#f44":dPct<=30?"#ce9178":"#4ec9b0");
-  var wC = !checked?"#555":(wPct<=5?"#f44":wPct<=30?"#ce9178":"#4ec9b0");
+  if(emailShort.length>30) emailShort = emailShort.slice(0,28)+"…";
   var planTag = a.plan?('<span class="plan-tag">'+_esc(a.plan)+'</span>'):"";
-  var euaTag = (checked && q.overageDollars>0)?('<span class="eua" title="Extra Usage $'+Math.round(q.overageDollars)+'">$'+Math.round(q.overageDollars)+'</span>'):(checked?'<span class="eua0">$0</span>':"");
   var authTag = auth?'<span class="eua" title="已登录·可注入">登</span>':'<span class="uc" title="需登录解锁">需登</span>';
   return ''+
-  '<div class="row'+(active?" act":"")+(auth?"":" expired-row")+'" data-i="'+i+'" data-id="'+_esc(a.id)+'" data-email="'+_esc((a.email||"").toLowerCase())+'">'+
-    '<input type="checkbox" class="chk" data-i="'+i+'" />'+
+  '<div class="row'+(active?" act":"")+(auth?"":" expired-row")+'" data-i="'+i+'" data-id="'+_esc(a.id)+'" data-email="'+_esc((a.email||"").toLowerCase())+'" onclick="rowClick(event,'+i+')">'+
+    '<input type="checkbox" class="chk" data-i="'+i+'" onclick="event.stopPropagation()" />'+
     '<span class="acc-no" title="编号 '+(i+1)+'">'+(i+1)+'</span>'+
     '<span class="dm '+db[0]+'" title="'+_esc(db[1])+'">'+db[0]+'</span>'+
     '<span class="em" title="'+_esc(a.email||a.id)+'">'+_esc(emailShort)+'</span>'+
-    planTag+euaTag+authTag+
-    '<span class="qt">'+
-      '<span class="mb"><span class="mf" style="width:'+dPct+'%;background:'+dC+'"></span></span>'+
-      '<span class="ql" style="color:'+dC+'">'+(checked?"D"+dPct:"D?")+'</span>'+
-      '<span class="mb"><span class="mf" style="width:'+wPct+'%;background:'+wC+'"></span></span>'+
-      '<span class="ql" style="color:'+wC+'">'+(checked?"W"+wPct:"W?")+'</span>'+
-    '</span>'+
-    '<span class="acts">'+
+    planTag+authTag+
+    '<span class="acts" onclick="event.stopPropagation()">'+
       '<button class="b dv" onclick="dv('+i+')" title="Devin Cloud 展开(Sessions/知识库/剧本/密钥)">&#9729;&#9662;</button>'+
       (auth?
-        '<button class="b sw" onclick="sw('+i+')" title="注入浏览器打开(切号)">&#9889;</button>'+
-        '<button class="b rt" onclick="openTab('+i+')" title="多实例标签打开·注入登录">&#128421;</button>'+
         '<button class="b vf" onclick="rq('+i+')" title="刷新额度">&#128260;</button>'
       :
-        '<button class="b sw" onclick="doLogin('+i+')" title="登录解锁 auth1" style="background:#0e639c;color:#fff">&#128273;</button>'
+        '<button class="b sw" onclick="doLogin('+i+')" title="登录解锁" style="background:#0e639c;color:#fff">&#128273;</button>'
       )+
       '<button class="b cp" onclick="cp('+i+')" title="复制 JSON">&#128203;</button>'+
-      '<button class="b wp" onclick="wp('+i+')" title="水过无痕·清理">&#127754;</button>'+
+      '<button class="b wp" onclick="wp('+i+')" title="水过无痕">&#127754;</button>'+
       '<button class="b rm" onclick="rm('+i+')" title="删除">&times;</button>'+
     '</span>'+
   '</div>'+
   '<div class="dv-detail" id="dvDetail'+i+'" data-i="'+i+'" data-email="'+_esc((a.email||"").toLowerCase())+'"></div>';
 }
+function rowClick(e,i){ if(e.target.closest&&e.target.closest(".acts,.chk"))return; openTab(i); }
 
 // ── 统计 & 渲染 ──
 function render(){
@@ -249,11 +267,6 @@ function render(){
   var authed=accs.filter(hasAuth).length;
   document.getElementById("st-tok").textContent=authed;
   document.getElementById("st-avail").textContent=authed;
-  // 汇总 D/W
-  var dSum=0,wSum=0,cnt=0;
-  accs.forEach(function(a){ var q=a.quota; if(q&&typeof q.dPct==="number"){dSum+=q.dPct;wSum+=q.wPct;cnt++;} });
-  if(cnt>0){ document.getElementById("st-dw").textContent="D"+Math.round(dSum/cnt)+" W"+Math.round(wSum/cnt)+" (均)"; document.getElementById("poolFill").style.width=Math.round(dSum/cnt)+"%"; }
-  else { document.getElementById("st-dw").textContent="D— W—"; }
   // 当前
   var act=accs.filter(function(x){return x.id===getActive();})[0];
   var ai=document.getElementById("actInfo");
@@ -462,6 +475,59 @@ function initRelayCfg(){
   // 无配置时自动展开
   if(!cfg.url) toggleRelayCfg();
 }
+
+// ── 备份管理 ──
+function toggleBackup(){ var b=document.getElementById("bkBody"); var open=b.classList.toggle("open"); document.getElementById("bkArrow").textContent=open?"▲":"▼"; if(open) loadBackups(); }
+function getBackups(){ try{ return JSON.parse(localStorage.getItem("rtflow.backups")||"[]"); }catch(e){ return []; } }
+function saveBackups(b){ localStorage.setItem("rtflow.backups", JSON.stringify(b||[])); }
+async function loadBackups(){
+  var bc=document.getElementById("bkContent");
+  bc.innerHTML='<span style="color:#888">扫描各账号备份中…</span>';
+  var accs=loadAcc().filter(hasAuth);
+  var all=getBackups();
+  // 如果无历史备份数据, 尝试从各账号拉取最近对话作为"备份索引"
+  if(!all.length && accs.length){
+    for(var i=0;i<accs.length;i++){
+      try{ var r=await DaoCloud.listSessions(accs[i],20); if(r.ok)(r.sessions||[]).forEach(function(s){ all.push({account:accs[i].email,title:s.title||"(无标题)",id:s.devin_id||s.session_id||s.id,status:s.status_enum||s.status||"",ts:Date.now()}); }); }catch(e){}
+    }
+    saveBackups(all);
+  }
+  renderBackups(all);
+}
+function renderBackups(all){
+  var bc=document.getElementById("bkContent");
+  if(!all.length){ bc.innerHTML='<div style="color:#666">暂无备份 · 使用「备份」按钮下载对话后出现在此</div>'; return; }
+  var byAcc={};
+  all.forEach(function(b){ var k=b.account||"unknown"; if(!byAcc[k])byAcc[k]=[]; byAcc[k].push(b); });
+  var h='<div style="font-size:10px;color:#888;margin-bottom:4px">'+Object.keys(byAcc).length+' 账号 · '+all.length+' 条备份</div>';
+  Object.keys(byAcc).forEach(function(acc){
+    var items=byAcc[acc];
+    h+='<div style="margin-bottom:4px"><div style="font-size:11px;font-weight:600;color:#9cdcfe;padding:2px 0">'+_esc(acc)+' ('+items.length+')</div>';
+    items.slice(0,50).forEach(function(it){
+      h+='<div class="bk-item"><span class="bk-title" title="'+_esc(it.id||"")+'">'+_esc((it.title||"").slice(0,40))+'</span><span class="bk-meta">'+_esc(it.status||"")+'</span>';
+      h+='<button class="dvc-b" onclick="bkOpen(\''+_esc(it.id||"")+'\',\''+_esc(acc)+'\')" title="查看">&#128065;</button>';
+      h+='</div>';
+    });
+    h+='</div>';
+  });
+  bc.innerHTML=h;
+}
+function bkOpen(id,acc){ toast("查看对话 "+id+" (打开 Devin Cloud)"); try{ N.openUrlTab&&N.openUrlTab("https://app.devin.ai/sessions/"+id); }catch(e){} }
+function clearBackups(){ if(!confirm("清空所有本地备份索引?"))return; saveBackups([]); renderBackups([]); toast("已清空"); }
+
+// ── 下载管理 ──
+function toggleDl(){ document.getElementById("dlFloat").classList.toggle("open"); renderDl(); }
+function getDl(){ try{ return JSON.parse(localStorage.getItem("rtflow.downloads")||"[]"); }catch(e){ return []; } }
+function addDl(name,url){ var dl=getDl(); dl.unshift({name:name,url:url,ts:Date.now()}); if(dl.length>50)dl=dl.slice(0,50); localStorage.setItem("rtflow.downloads",JSON.stringify(dl)); }
+function renderDl(){
+  var dl=getDl();
+  var h=dl.length?'':'<div style="padding:8px;color:#666;font-size:10px">无下载记录</div>';
+  dl.slice(0,20).forEach(function(d,i){
+    h+='<div class="dl-item"><span class="dl-name" title="'+_esc(d.url||"")+'">'+_esc(d.name||"file")+'</span><button class="dvc-b" onclick="dlOpen('+i+')" title="打开">&#128065;</button></div>';
+  });
+  document.getElementById("dlList").innerHTML=h;
+}
+function dlOpen(i){ var dl=getDl(); var d=dl[i]; if(d&&d.url){ try{N.openUrlTab&&N.openUrlTab(d.url);}catch(e){} } }
 
 // ── 初始化 ──
 render();
