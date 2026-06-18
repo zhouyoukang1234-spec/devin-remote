@@ -7245,10 +7245,12 @@ async function reinjectBridgeToAllAccounts(reason: string): Promise<{ injected: 
     try {
         // 采纳最新发布连接 + 同步本机 MCP 活地址进档案
         try { const c = bridgeReadPublishedConn(); if (c && c.url) { bridgeUrl = c.url; if (c.token) bridgeToken = c.token; } } catch { /* 守柔 */ }
-        try { daoSyncDaoMcpIntoProfile(); } catch { /* 守柔 */ }
-        const p = loadInjectProfile();
-        const mcpEntry = (p.mcps || []).find(m => m && m.name === DAO_MCP_NAME) || null;
-        const liveMcpUrl = mcpEntry ? String(mcpEntry.url || '').trim() : '';
+        try { daoSyncDaoMcpIntoProfile(); } catch { /* 守柔 */ } // 顺手校正 profile 条目(供 batch 等路径)
+        // ★ 活值直取源点 mcp_public.json — 不信可能被旧窗口滞留成死链的 profile 条目(本会话真因: profile 卡在 wet-groups 死链)
+        let liveMcpUrl = '', liveMcpTok = '';
+        try { if (fs.existsSync(DAO_MCP_PUBLIC_FILE)) { const j = JSON.parse(fs.readFileSync(DAO_MCP_PUBLIC_FILE, 'utf8')); liveMcpUrl = String(j.url || '').trim(); liveMcpTok = String(j.token || '').trim(); } } catch { /* 守柔 */ }
+        const mcpInject: InjectProfileItemM = { name: DAO_MCP_NAME, slug: 'dao-bridge-mcp', transport: 'HTTP', url: liveMcpUrl, short_description: 'DAO four-module: PC control + browser CDP + plugin + vscode', installation_scope: 'org' };
+        if (liveMcpTok) mcpInject.headers = { Authorization: 'Bearer ' + liveMcpTok };
         const liveBridgeUrl = String(bridgeUrl || '').trim();
         // 本机当前活地址自身得是活的, 才有资格去替换别处的死链(否则别拿死链换死链)
         const liveMcpOk = liveMcpUrl ? await alive(originProbe(liveMcpUrl)) : false;
@@ -7260,16 +7262,17 @@ async function reinjectBridgeToAllAccounts(reason: string): Promise<{ injected: 
             if (!a || !a.auth1 || a.auth1.startsWith('devin-session-token$') || !a.orgId) continue;
             if (doneOrgs.has(a.orgId)) continue;
             doneOrgs.add(a.orgId);
-            // ── MCP 探活自愈 ──
-            if (mcpEntry && liveMcpOk && !isManualLocked(a.orgId, 'mcps', DAO_MCP_NAME)) {
+            // ── MCP 探活自愈 (heal 目标=源点活地址 liveMcpUrl, 与 profile 是否滞留无关) ──
+            if (liveMcpUrl && liveMcpOk && !isManualLocked(a.orgId, 'mcps', DAO_MCP_NAME)) {
                 try {
                     const inst = await devinListMcpInstallations(a.orgId, a.auth1);
                     const hits = (inst.ok && inst.items) ? inst.items.filter((it: any) => String(it.name || '').replace(/^★ /, '').toLowerCase() === DAO_MCP_NAME.toLowerCase()) : [];
                     const injUrl = hits.length ? String(hits[0].url || '').trim() : '';
-                    const injOk = injUrl ? await alive(originProbe(injUrl)) : false;
-                    if (!injOk) { // 缺失 或 死链 → 才动手
+                    // 已注入地址与源点活地址不同 → 探活; 相同则视为已对齐(免探免动)
+                    const injOk = (injUrl && injUrl === liveMcpUrl) ? true : (injUrl ? await alive(originProbe(injUrl)) : false);
+                    if (!injOk) { // 缺失 或 死链(且不等于活地址) → 才动手
                         for (const h of hits) { if (h.id) { try { await devinDeleteMcp(a.orgId, String(h.id), a.auth1); } catch { /* 守柔 */ } } }
-                        await devinAddCustomMcp(a.orgId, Object.assign({}, mcpEntry, { slug: mcpSlug(mcpEntry) }), a.auth1);
+                        await devinAddCustomMcp(a.orgId, mcpInject, a.auth1);
                         healedMcp++;
                     }
                 } catch { /* 守柔 */ }
