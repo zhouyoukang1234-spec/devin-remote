@@ -7206,33 +7206,53 @@ function daoSyncDaoMcpIntoProfile(): void {
         if (changed) { if (!p.enabled) p.enabled = true; saveInjectProfile(p); }
     } catch { /* 道法自然·守柔 */ }
 }
-// ═══ v3.17.4 · 内网穿透·实时反向注入 — 随隧道 URL/端口变化自动把最新「操作文档(KB)+归一 MCP」反注到所有账号 ═══
-//   触发: BRIDGE_DIR/conn.json 或 dao_vm/mcp_public.json 等变化(常驻桥重建隧道回写) → 防抖 1.5s → 仅当签名(URL/Token/端口)变化才扩散。
-//   守柔·省网(不重蹈批量并发卡网覆辙): 签名未变不重注; 逐 org 串行(非并发); KB 幂等 upsert, MCP 先删后建以更新 URL。
-let _lastBridgeReinjectSig = '';
+// ═══ 内网穿透·探活驱动的反向注入自愈 — 「检测到位才刷新, 否则不动」 ═══
+//   反者道之动: 不再「本机一变就强刷所有账号」(多窗口端口不同→会互相刷来刷去打架),
+//   改为 detection-driven: 巡检时先探活账号里「已注入的那条 URL」, 能连通就什么都不动
+//   (哪怕是另一窗口注的地址, 只要活着就不碰)→ 多窗口天然不打架; 只有探到死链/缺失才刷成本机当前活地址。
+//   逐 org 串行(非并发); KB 与 MCP 各自独立探活独立自愈; 守 manual 锁。
 let _bridgeReinjectInflight = false;
+let _lastHealMs = 0;
 let _bridgeReinjectTimer: ReturnType<typeof setTimeout> | null = null;
-function bridgeCurrentSig(): string {
-    let url = bridgeUrl || '', tok = bridgeToken || ws.token || '';
-    try { const c = bridgeReadPublishedConn(); if (c) { if (c.url) url = c.url; if (c.token) tok = c.token; } } catch { /* 守柔 */ }
-    let mcpUrl = '', mcpTok = '';
-    try { if (fs.existsSync(DAO_MCP_PUBLIC_FILE)) { const j = JSON.parse(fs.readFileSync(DAO_MCP_PUBLIC_FILE, 'utf8')); mcpUrl = String(j.url || ''); mcpTok = String(j.token || ''); } } catch { /* 守柔 */ }
-    return [url, tok, String(ws.port || ''), mcpUrl, mcpTok].join('|');
+// 探活: GET 目标 URL, 2xx~4xx=活(端点在); 5xx(cloudflare 530/1033/52x 隧道死)/超时/连不上=死。
+function bridgeProbeAlive(rawUrl: string, timeoutMs = 6000): Promise<boolean> {
+    return new Promise(resolve => {
+        let done = false; const fin = (v: boolean) => { if (!done) { done = true; resolve(v); } };
+        try {
+            const u = new URL(rawUrl);
+            const mod = u.protocol === 'https:' ? https : http;
+            const req = mod.request({ method: 'GET', hostname: u.hostname, port: u.port || (u.protocol === 'https:' ? 443 : 80), path: (u.pathname || '/') + (u.search || ''), timeout: timeoutMs, rejectUnauthorized: false } as any, res => {
+                const sc = res.statusCode || 0; res.resume(); fin(sc >= 200 && sc < 500);
+            });
+            req.on('timeout', () => { try { req.destroy(); } catch { /* 守柔 */ } fin(false); });
+            req.on('error', () => fin(false));
+            req.end();
+        } catch { fin(false); }
+    });
 }
+// 兼容旧调用名 — 现统一走探活自愈
 async function reinjectBridgeToAllAccounts(reason: string): Promise<{ injected: number; changed: boolean }> {
     if (_bridgeReinjectInflight) return { injected: 0, changed: false };
-    const sig = bridgeCurrentSig();
-    if (sig === _lastBridgeReinjectSig) return { injected: 0, changed: false }; // 无变化·守柔不重注·省网
+    if (Date.now() - _lastHealMs < 12000) return { injected: 0, changed: false }; // 软节流: poll+watch 重叠时不连环跑
     _bridgeReinjectInflight = true;
-    let injected = 0;
+    let injected = 0, healedMcp = 0, healedKb = 0;
+    const probeCache = new Map<string, boolean>();
+    // 探活探隧道源点(scheme://host/), 不打 /mcp(streamable GET 会挂起 SSE 导致误判死)。
+    // 隧道活: cloudflare 回 2xx/4xx(端点在); 隧道死: 530/1033/52x(>=500) 或连不上。
+    const originProbe = (u: string): string => { try { return new URL(u).origin + '/'; } catch { return u; } };
+    const bridgeProbe = (u: string): string => { try { return new URL(u).origin + '/api/health'; } catch { return u; } };
+    const alive = async (target: string): Promise<boolean> => { if (!target) return false; if (probeCache.has(target)) return probeCache.get(target)!; const r = await bridgeProbeAlive(target); probeCache.set(target, r); return r; };
     try {
-        // 采纳最新发布连接 → 本进程 bridgeUrl/token 跟随, 使 MD 用最新值
+        // 采纳最新发布连接 + 同步本机 MCP 活地址进档案
         try { const c = bridgeReadPublishedConn(); if (c && c.url) { bridgeUrl = c.url; if (c.token) bridgeToken = c.token; } } catch { /* 守柔 */ }
-        // 同步 MCP 档案条目(URL 轮换自更) → 取最新钉住条目
         try { daoSyncDaoMcpIntoProfile(); } catch { /* 守柔 */ }
-        const md = bridgeGenerateCloudMd();
         const p = loadInjectProfile();
         const mcpEntry = (p.mcps || []).find(m => m && m.name === DAO_MCP_NAME) || null;
+        const liveMcpUrl = mcpEntry ? String(mcpEntry.url || '').trim() : '';
+        const liveBridgeUrl = String(bridgeUrl || '').trim();
+        // 本机当前活地址自身得是活的, 才有资格去替换别处的死链(否则别拿死链换死链)
+        const liveMcpOk = liveMcpUrl ? await alive(originProbe(liveMcpUrl)) : false;
+        const liveBridgeOk = liveBridgeUrl ? await alive(bridgeProbe(liveBridgeUrl)) : false;
         const store = loadAccountsAuthStore();
         const doneOrgs = new Set<string>();
         for (const e of Object.keys(store)) {
@@ -7240,30 +7260,40 @@ async function reinjectBridgeToAllAccounts(reason: string): Promise<{ injected: 
             if (!a || !a.auth1 || a.auth1.startsWith('devin-session-token$') || !a.orgId) continue;
             if (doneOrgs.has(a.orgId)) continue;
             doneOrgs.add(a.orgId);
-            // KB: 幂等 upsert 最新操作文档 (守 manual 锁)
-            if (!isManualLocked(a.orgId, 'knowledge', DAO_BRIDGE_KB_NAME)) {
-                try { await devinUpsertKnowledge(a.orgId, DAO_BRIDGE_KB_NAME, md, DAO_BRIDGE_KB_TRIGGER, a.auth1); } catch { /* 守柔 */ }
-            }
-            // MCP: URL 已变 → 先删旧同名安装再建新 (守 manual 锁)
-            if (mcpEntry && !isManualLocked(a.orgId, 'mcps', DAO_MCP_NAME)) {
+            // ── MCP 探活自愈 ──
+            if (mcpEntry && liveMcpOk && !isManualLocked(a.orgId, 'mcps', DAO_MCP_NAME)) {
                 try {
                     const inst = await devinListMcpInstallations(a.orgId, a.auth1);
-                    if (inst.ok && inst.items) {
-                        for (const it of inst.items) {
-                            if (String(it.name || '').replace(/^★ /, '').toLowerCase() === DAO_MCP_NAME.toLowerCase() && it.id) {
-                                try { await devinDeleteMcp(a.orgId, String(it.id), a.auth1); } catch { /* 守柔 */ }
-                            }
-                        }
+                    const hits = (inst.ok && inst.items) ? inst.items.filter((it: any) => String(it.name || '').replace(/^★ /, '').toLowerCase() === DAO_MCP_NAME.toLowerCase()) : [];
+                    const injUrl = hits.length ? String(hits[0].url || '').trim() : '';
+                    const injOk = injUrl ? await alive(originProbe(injUrl)) : false;
+                    if (!injOk) { // 缺失 或 死链 → 才动手
+                        for (const h of hits) { if (h.id) { try { await devinDeleteMcp(a.orgId, String(h.id), a.auth1); } catch { /* 守柔 */ } } }
+                        await devinAddCustomMcp(a.orgId, Object.assign({}, mcpEntry, { slug: mcpSlug(mcpEntry) }), a.auth1);
+                        healedMcp++;
                     }
-                    await devinAddCustomMcp(a.orgId, Object.assign({}, mcpEntry, { slug: mcpSlug(mcpEntry) }), a.auth1);
+                } catch { /* 守柔 */ }
+            }
+            // ── KB 探活自愈: 回读已注 KB 的公网URL, 探活, 错了才重写 ──
+            if (liveBridgeOk && !isManualLocked(a.orgId, 'knowledge', DAO_BRIDGE_KB_NAME)) {
+                try {
+                    let kbUrl = '';
+                    const kl = await devinListKnowledge(a.orgId, a.auth1);
+                    if (kl.ok && kl.learnings) {
+                        const hit = kl.learnings.find((k: any) => k.name === DAO_BRIDGE_KB_NAME);
+                        const m = hit && typeof hit.body === 'string' ? hit.body.match(/公网URL:\s*(\S+)/) : null;
+                        if (m) kbUrl = String(m[1] || '').trim();
+                    }
+                    const kbOk = /^https?:\/\//.test(kbUrl) ? await alive(bridgeProbe(kbUrl)) : false;
+                    if (!kbOk) { await devinUpsertKnowledge(a.orgId, DAO_BRIDGE_KB_NAME, bridgeGenerateCloudMd(), DAO_BRIDGE_KB_TRIGGER, a.auth1); healedKb++; }
                 } catch { /* 守柔 */ }
             }
             injected++;
         }
-        _lastBridgeReinjectSig = sig;
-        try { console.log('[dao] bridge real-time reinject (' + reason + ') → ' + injected + ' org(s)'); } catch { /* 守柔 */ }
+        _lastHealMs = Date.now();
+        try { console.log('[dao] heal-injections (' + reason + ') → scanned ' + injected + ' org(s), healed mcp=' + healedMcp + ' kb=' + healedKb + (liveMcpOk ? '' : ' [local-mcp-down]') + (liveBridgeOk ? '' : ' [local-bridge-down]')); } catch { /* 守柔 */ }
     } finally { _bridgeReinjectInflight = false; }
-    return { injected, changed: true };
+    return { injected: healedMcp + healedKb, changed: (healedMcp + healedKb) > 0 };
 }
 function bridgeScheduleReinject(reason: string): void {
     if (_bridgeReinjectTimer) { clearTimeout(_bridgeReinjectTimer); }
