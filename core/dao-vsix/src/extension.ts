@@ -461,7 +461,7 @@ export async function activate(context: vscode.ExtensionContext) {
     // 守柔·自愈兜底: fs.watch 在隧道于「无 dao-vsix 窗口」时轮换会漏事件 → 周期性巡检,
     // 仅当签名(隧道/ MCP URL·Token)变化才真正重注(reinjectBridgeToAllAccounts 内 sig 门控·省网),
     // 故空转零成本。确保云端账号注入的 MCP/KB 地址永不滞留旧隧道。
-    const _reinjectPoll = setInterval(() => { bridgeScheduleReinject('poll'); }, 90000);
+    const _reinjectPoll = setInterval(() => { bridgeScheduleReinject('poll'); }, 25000);
     context.subscriptions.push({ dispose: () => { try { clearInterval(_reinjectPoll); } catch { /* 守柔 */ } } });
     context.subscriptions.push(
         vscode.commands.registerCommand('dao.startServer', () => startServer(context)),
@@ -2290,6 +2290,8 @@ function bridgeWriteArtifacts() {
 }
 
 function bridgeGenerateCloudMd(): string {
+    // 实时·守柔: 生成前先采纳常驻桥发布的最新连接(conn.json) → KB 永远是当前活 URL/Token/端口, 不滞留旧隧道。
+    try { const c = bridgeReadPublishedConn(); if (c && c.url) { bridgeUrl = c.url; if (c.token) bridgeToken = c.token; } } catch { /* 守柔 */ }
     const wsInfo = { name: vscode.workspace.workspaceFolders?.[0]?.name || 'workspace', root: vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || '', host: os.hostname() };
     const ts = new Date().toISOString();
     const tok = bridgeToken || ws.token;
@@ -6603,6 +6605,7 @@ async function devinListMcpInstallations(orgId: string, auth1: string): Promise<
             id: m.server_id || m.id || m.installation_id || '',
             transport: m.transport || '',
             connected: m.is_enabled !== false,
+            url: m.url || '',
         }));
     return { ok: true, items };
 }
@@ -6959,8 +6962,11 @@ function resolveBatchAccounts(opts: { accounts?: DaoBatchAccount[]; lines?: stri
 }
 
 async function devinBatchInject(accounts: DaoBatchAccount[]): Promise<DaoBatchProgress> {
-    const url = ws.publicUrl || (ws.port ? 'http://localhost:' + ws.port : '');
-    const token = ws.token || bridgeToken || '';
+    // 实时·守柔: 批量注入前采纳最新发布连接 + 把本机 MCP 活地址刷进档案 → 注入的 KB/MCP/secret 全是当前活值。
+    try { const c = bridgeReadPublishedConn(); if (c && c.url) { bridgeUrl = c.url; if (c.token) bridgeToken = c.token; } } catch { /* 守柔 */ }
+    try { daoSyncDaoMcpIntoProfile(); } catch { /* 守柔 */ }
+    const url = bridgeUrl || ws.publicUrl || (ws.port ? 'http://localhost:' + ws.port : '');
+    const token = bridgeToken || ws.token || '';
     const rulesText = getDaoRulesText();
     const bridgeMd = bridgeGenerateCloudMd();
     const pbBody = (url && token) ? buildDevinPlaybook(url, token) : '';
@@ -7311,18 +7317,29 @@ async function applyInjectProfileToOrg(orgId: string, auth1: string, p: InjectPr
     }
     for (const pb of p.playbooks) { if (pb && pb.title && !isManualLocked(orgId, 'playbooks', pb.title)) { try { await devinUpsertPlaybook(orgId, pb.title, pb.body || '', auth1); } catch { /* 守柔 */ } } }
     for (const a of (p.automations || [])) { if (a && a.name) { try { await devinUpsertAutomation(orgId, a, auth1); } catch { /* 守柔 */ } } }
-    // 钉住的 MCP — 幂等: 已存在(按 slug)则跳过, 否则追录到该 org
+    // 钉住的 MCP — STDIO(无 url)幂等跳过; HTTP/SSE(随隧道轮换会换 URL)→ 已存在但地址不同即「先删后建」,
+    // 使批量反向注入/切号注入都实时把 MCP 刷新到当前活地址(不再因「已存在」而滞留旧死链)。
     if (p.mcps && p.mcps.length) {
-        let existing: Set<string> = new Set();
+        let existing: Array<{ name?: string; id?: string; url?: string }> = [];
         try {
             const inst = await devinListMcpInstallations(orgId, auth1);
-            if (inst.ok && inst.items) for (const it of inst.items) existing.add(String((it.name || '').replace(/^★ /, '')).toLowerCase());
+            if (inst.ok && inst.items) existing = inst.items;
         } catch { /* 守柔 */ }
+        const hitsFor = (m: InjectProfileItemM) => existing.filter(it => {
+            const nm = String((it.name || '').replace(/^★ /, '')).toLowerCase();
+            return nm === String(m.name).toLowerCase() || nm === mcpSlug(m);
+        });
         for (const m of p.mcps) {
             if (!m || !m.name) continue;
             if (isManualLocked(orgId, 'mcps', m.name) || isManualLocked(orgId, 'mcps', mcpSlug(m))) continue;
             const slug = mcpSlug(m);
-            if (existing.has(String(m.name).toLowerCase()) || existing.has(slug)) continue;
+            const hits = hitsFor(m);
+            const wantUrl = String(m.url || '').trim();
+            if (hits.length) {
+                if (!wantUrl) continue; // STDIO/无 URL: 幂等跳过, 不churn
+                if (hits.some(h => String(h.url || '').trim() === wantUrl)) continue; // 地址未变: 跳过省网
+                for (const h of hits) { if (h.id) { try { await devinDeleteMcp(orgId, String(h.id), auth1); } catch { /* 守柔 */ } } } // 地址变: 先删旧
+            }
             try { await devinAddCustomMcp(orgId, Object.assign({}, m, { slug }), auth1); } catch { /* 守柔 */ }
         }
     }

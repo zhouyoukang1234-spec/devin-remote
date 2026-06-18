@@ -123,7 +123,13 @@ await devinJsonPost(DEVIN_APP + '/api/mcp/installations', { Authorization, 'x-co
 ### 5.3 已做的修复（本会话）
 
 1. **即时修复**：已把死链删除、把当前活 URL(`plains-gear…`)重注进账号 —— 复验 `/api/mcp/servers` 现为活 URL。
-2. **自愈兜底**（dao-vsix 3.17.13）：新增 90s 周期巡检 `bridgeScheduleReinject('poll')`，签名门控（URL/Token 未变=零成本空转）。即使 fs.watch 漏事件，开着窗口时最迟 90s 内云端地址自愈到活隧道。
+2. **自愈兜底**（dao-vsix 3.17.13）：新增周期巡检 `bridgeScheduleReinject('poll')`，签名门控（URL/Token 未变=零成本空转）。
+3. **真实时·根因修复**（dao-vsix 3.17.14，最核心）：
+   - **批量反向注入/切号注入此前会"跳过已存在的 MCP"** → `applyInjectProfileToOrg` 对已存在同名 MCP 直接 `continue`，所以隧道轮换后那条 MCP 的 URL 永远不更新（死链滞留的真正代码病灶）。已改为：STDIO(无 url)仍幂等跳过；**HTTP/SSE 若已存在但地址不同 → 先删后建,刷新到当前活地址**；地址相同则跳过省网。
+   - `bridgeGenerateCloudMd()` 生成 KB 前先采纳 `conn.json` 最新发布连接 → **KB 永远是当前活 URL/Token/端口**，不再用进程内可能滞留的 `ws.publicUrl`。
+   - `devinBatchInject()` 批量前先刷新活连接 + `daoSyncDaoMcpIntoProfile()` → 批量注入的 KB/MCP/secret 全是当前活值。
+   - 巡检间隔 90s → **25s**，更贴近"实时"。
+   - 列表项补出 `url` 字段，供"地址变没变"比对。
 
 ### 5.4 "完美·无感·和官方同等"的根治方向（建议）
 
