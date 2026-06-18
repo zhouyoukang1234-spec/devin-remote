@@ -2934,6 +2934,52 @@ function bkDownload(i,ci){var a=S.backups.accounts[i];if(!a)return;var p=(ci==nu
 function bkUnlock(i,ci){var a=S.backups.accounts[i];if(!a)return;var c=(a.conversations||[])[ci];if(!c||c.type!=='zip'||!c.path)return;toast('解锁(解压)中…',true);cmd('unlockBackupZip',{path:c.path})}
 // 视图切换: 按账号(分组) ↔ 近期对话(跨账号·按时间倒序)
 function bkSetView(mode){S.bkView=mode;rBackupsData(S.backups,null)}
+// 检索: 账号名(编号/邮箱) / 对话名 / devinId 任意子串匹配 (大小写无关)
+function bkMatch(c,a,q){
+  if(!q)return true;
+  var t=String((c&&(c.title||c.name))||'').toLowerCase();
+  var ac=String((a&&(a.email||a.account))||'').toLowerCase()+' #'+String((a&&a.accountNo)||'');
+  var did=String((c&&c.devinId)||'').toLowerCase();
+  return t.indexOf(q)>=0||ac.indexOf(q)>=0||did.indexOf(q)>=0;
+}
+// 仅重渲列表区(#bklist), 不动检索框 → 输入时焦点不丢
+function bkRenderList(){
+  var box=document.getElementById('bklist');if(!box)return;
+  var tree=S.backups||{accounts:[]};var accts=tree.accounts||[];
+  var view=S.bkView||'acct';var q=String(S.bkQuery||'').trim().toLowerCase();
+  var h='';
+  if(view==='recent'){
+    var flat=[];
+    accts.forEach(function(a,i){(a.conversations||[]).forEach(function(c,ci){if(bkMatch(c,a,q))flat.push({c:c,i:i,ci:ci})})});
+    flat.sort(function(x,y){return (y.c.mtime||0)-(x.c.mtime||0)});
+    var shown=flat.slice(0,200);
+    if(!shown.length){box.innerHTML='<div class="empty"><div class="ic">🕒</div><p style="color:var(--muted)">'+(q?('无匹配「'+esc(q)+'」'):'暂无对话')+'</p></div>';return}
+    shown.forEach(function(it){h+='<div class="card" style="margin-bottom:4px;padding:6px 8px">'+bkConvRow(it.c,it.i,it.ci,true)+'</div>'});
+    if(flat.length>shown.length)h+='<div style="font-size:10px;color:var(--muted);margin-top:4px">仅显示最近 200 条 (匹配 '+flat.length+')</div>';
+    box.innerHTML=h;return;
+  }
+  var any=false;
+  accts.forEach(function(a,i){
+    var acctHit=bkMatch({},a,q);
+    var convList=(a.conversations||[]).map(function(c,ci){return {c:c,ci:ci}});
+    var convs=(q&&!acctHit)?convList.filter(function(x){return bkMatch(x.c,a,q)}):convList;
+    if(q&&!acctHit&&!convs.length)return;
+    any=true;
+    var aid='bkacc-'+i;
+    var label=(a.accountNo?('#'+a.accountNo+' '):'')+(a.email||a.account||'');
+    var open=!!q; // 检索时自动展开命中账号
+    h+='<div class="card">';
+    h+='<div class="cr" style="cursor:pointer" onclick="bkToggle(&#39;'+aid+'&#39;)"><span class="l" style="font-weight:600;color:var(--fg)">'+(open?'▾':'▸')+' '+esc(label)+'</span><span class="v" style="font-size:10px;color:var(--muted)">'+(q?(convs.length+'/'+(a.count||0)):(a.count||0))+' 对话'+(a.hasAccountInfo?' · 账号快照':'')+'</span></div>';
+    h+='<div class="br" style="margin-top:4px"><button class="btn sm ghost" onclick="bkReveal('+i+',null)">📂 目录</button><button class="btn sm ghost" onclick="bkDownload('+i+',null)">⬇ 下载账号</button></div>';
+    h+='<div id="'+aid+'" style="display:'+(open?'block':'none')+';margin-top:6px;border-top:1px solid var(--border);padding-top:6px">';
+    convs.slice(0,200).forEach(function(x){h+=bkConvRow(x.c,i,x.ci,false)});
+    if(convs.length>200)h+='<div style="font-size:10px;color:var(--muted);margin-top:4px">仅显示前 200 条，更多请打开目录</div>';
+    h+='</div></div>';
+  });
+  if(!any){box.innerHTML='<div class="empty"><div class="ic">🔍</div><p style="color:var(--muted)">无匹配「'+esc(q)+'」</p></div>';return}
+  box.innerHTML=h;
+}
+function bkSearch(val){S.bkQuery=val;bkRenderList()}
 // 单条对话渲染 (复用于两种视图) — 含 devinId/账号信息/解锁
 function bkConvRow(c,i,ci,showAcct){
   var t=c.title||c.name||'(未命名)';var cid='bkc-'+i+'-'+ci;
@@ -2961,30 +3007,11 @@ function rBackupsData(tree,err){
   var view=S.bkView||'acct';
   var h='<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px"><span style="color:var(--muted);font-size:11px">'+accts.length+' 账号 · '+totalConv+' 对话备份</span><button class="btn sm" onclick="rBackups()">⟳</button></div>';
   h+='<div class="br" style="margin-bottom:8px"><button class="btn sm'+(view==='acct'?' primary':' ghost')+'" onclick="bkSetView(&#39;acct&#39;)">📂 按账号</button><button class="btn sm'+(view==='recent'?' primary':' ghost')+'" onclick="bkSetView(&#39;recent&#39;)">🕒 近期对话</button></div>';
+  h+='<input id="bksearch" type="text" placeholder="🔍 检索账号 / 对话名 / devinId" value="'+esc(S.bkQuery||'')+'" oninput="bkSearch(this.value)" style="width:100%;box-sizing:border-box;padding:6px 8px;margin-bottom:8px;background:var(--bg,#1e1e1e);border:1px solid var(--border);border-radius:4px;color:var(--fg);font-size:12px;outline:none">';
   h+='<div style="font-size:10px;color:var(--muted);margin-bottom:8px;word-break:break-all">根: '+esc(tree.root||'')+'</div>';
-  if(view==='recent'){
-    // 跨账号 · 近期对话: 扁平化所有对话, 按 mtime 倒序, 每条带账号+devinId
-    var flat=[];
-    accts.forEach(function(a,i){(a.conversations||[]).forEach(function(c,ci){flat.push({c:c,i:i,ci:ci})})});
-    flat.sort(function(x,y){return (y.c.mtime||0)-(x.c.mtime||0)});
-    var shown=flat.slice(0,200);
-    if(!shown.length){h+='<div class="empty"><div class="ic">🕒</div><p style="color:var(--muted)">暂无对话</p></div>';v.innerHTML=h;return}
-    shown.forEach(function(it){h+='<div class="card" style="margin-bottom:4px;padding:6px 8px">'+bkConvRow(it.c,it.i,it.ci,true)+'</div>'});
-    if(flat.length>200)h+='<div style="font-size:10px;color:var(--muted);margin-top:4px">仅显示最近 200 条 (共 '+flat.length+')</div>';
-    v.innerHTML=h;return;
-  }
-  accts.forEach(function(a,i){
-    var aid='bkacc-'+i;
-    var label=(a.accountNo?('#'+a.accountNo+' '):'')+(a.email||a.account||'');
-    h+='<div class="card">';
-    h+='<div class="cr" style="cursor:pointer" onclick="bkToggle(&#39;'+aid+'&#39;)"><span class="l" style="font-weight:600;color:var(--fg)">▸ '+esc(label)+'</span><span class="v" style="font-size:10px;color:var(--muted)">'+(a.count||0)+' 对话'+(a.hasAccountInfo?' · 账号快照':'')+'</span></div>';
-    h+='<div class="br" style="margin-top:4px"><button class="btn sm ghost" onclick="bkReveal('+i+',null)">📂 目录</button><button class="btn sm ghost" onclick="bkDownload('+i+',null)">⬇ 下载账号</button></div>';
-    h+='<div id="'+aid+'" style="display:none;margin-top:6px;border-top:1px solid var(--border);padding-top:6px">';
-    (a.conversations||[]).slice(0,200).forEach(function(c,ci){h+=bkConvRow(c,i,ci,false)});
-    if((a.conversations||[]).length>200)h+='<div style="font-size:10px;color:var(--muted);margin-top:4px">仅显示前 200 条，更多请打开目录</div>';
-    h+='</div></div>';
-  });
+  h+='<div id="bklist"></div>';
   v.innerHTML=h;
+  bkRenderList();
 }
 // 帛书·「为而弗恃」: API Key 全程底层自动获取, 面板永不出现手动输入 — 旧 submitCogKey* 已删
 function rHost(){var hc=S.hostCaps||{};var nm=hc.appName||'VS Code';var ct=hc.hasConvTracking;return '<div class="st">运行环境 · 适配</div><div class="card"><div class="cr"><span class="l">IDE</span><span class="v">'+esc(nm)+'</span></div><div class="cr"><span class="l">Devin Cloud 全功能</span><span class="v" style="color:var(--success);font-size:10px">✓ 追踪·备份·切号反向注入·K/P/S/MCP·多实例</span></div><div class="cr"><span class="l">Cascade 对话追踪/备份</span><span class="v" style="font-size:10px;color:'+(ct?'var(--success)':'var(--warn)')+'">'+(ct?'✓ 可用':'⚠ 此IDE非Cascade·其余全部正常')+'</span></div></div>'}
