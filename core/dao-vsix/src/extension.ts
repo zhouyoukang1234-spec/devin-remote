@@ -458,6 +458,11 @@ export async function activate(context: vscode.ExtensionContext) {
     // v3.17.4 · 内穿实时反向注入: 监听隧道连接文件变化 → 防抖 → 仅签名变化才扩散到所有账号; 启动后延后做一次种入扩散。
     try { bridgeWatchForReinject(context); } catch { /* 守柔 */ }
     setTimeout(() => { bridgeScheduleReinject('activate'); }, 8000);
+    // 守柔·自愈兜底: fs.watch 在隧道于「无 dao-vsix 窗口」时轮换会漏事件 → 周期性巡检,
+    // 仅当签名(隧道/ MCP URL·Token)变化才真正重注(reinjectBridgeToAllAccounts 内 sig 门控·省网),
+    // 故空转零成本。确保云端账号注入的 MCP/KB 地址永不滞留旧隧道。
+    const _reinjectPoll = setInterval(() => { bridgeScheduleReinject('poll'); }, 90000);
+    context.subscriptions.push({ dispose: () => { try { clearInterval(_reinjectPoll); } catch { /* 守柔 */ } } });
     context.subscriptions.push(
         vscode.commands.registerCommand('dao.startServer', () => startServer(context)),
         vscode.commands.registerCommand('dao.stopServer', stopServer),
