@@ -27,6 +27,9 @@ const EXT_VERSION: string = (() => {
     return '1.3.2';
 })();
 const DAO_DIR = path.join(os.homedir(), '.dao');
+// 浏览器式下载列表(与对话备份分治): 经反代的"附件"响应落盘此处 + 索引, ⬇ 悬浮窗据此渲染。
+const DL_DIR = path.join(os.homedir(), '.wam', 'downloads');
+const DL_INDEX = path.join(DL_DIR, '_index.json');
 const GLOBAL_CONFIG_FILE = path.join(DAO_DIR, 'dao-config.json');  // CF全局凭证
 const CONFIG_FILE = GLOBAL_CONFIG_FILE;  // 别名 — 道法自然：一即一切
 const INST_FILE = path.join(DAO_DIR, 'dao-instances.json');
@@ -9230,6 +9233,97 @@ setTimeout(function() {
 }
 
 // ═══════════════════════════════════════════════════════════
+// 浏览器式下载列表 · 与对话备份分治
+//   经反代的响应若带 Content-Disposition: attachment(或 SPA blob 下载经注入脚本回传),
+//   即落盘 ~/.wam/downloads/ 并写入 _index.json; ⬇ 悬浮窗读索引渲染成浏览器下载列表。
+// ═══════════════════════════════════════════════════════════
+function _dlReadIndex(): any[] {
+    try { const a = JSON.parse(fs.readFileSync(DL_INDEX, 'utf8')); return Array.isArray(a) ? a : []; } catch { return []; }
+}
+function _dlWriteIndex(list: any[]): void {
+    try { fs.mkdirSync(DL_DIR, { recursive: true }); fs.writeFileSync(DL_INDEX, JSON.stringify(list.slice(0, 500), null, 2), 'utf8'); } catch { /* 守柔 */ }
+}
+function _dlSafeName(s: string): string {
+    return String(s || '').replace(/[\\\/:*?"<>|\r\n]/g, '_').replace(/^\.+/, '_').slice(0, 150) || ('download_' + Date.now());
+}
+function _dlFilenameFromCD(cd: string, fallbackUrl: string): string {
+    let name = '';
+    try {
+        let m = /filename\*\s*=\s*(?:UTF-8'')?([^;]+)/i.exec(cd);
+        if (m) name = decodeURIComponent(m[1].replace(/^["']|["']$/g, '').trim());
+        if (!name) { m = /filename\s*=\s*"?([^";]+)"?/i.exec(cd); if (m) name = (m[1] || '').trim(); }
+    } catch { /* 守柔 */ }
+    if (!name) { try { name = decodeURIComponent((new URL(fallbackUrl)).pathname.split('/').pop() || ''); } catch { /* 守柔 */ } }
+    return _dlSafeName(name || ('download_' + Date.now()));
+}
+function _dlUniquePath(base: string): { name: string; full: string } {
+    let name = base, full = path.join(DL_DIR, name), n = 1;
+    while (fs.existsSync(full)) {
+        const dot = base.lastIndexOf('.');
+        name = dot > 0 ? base.slice(0, dot) + '(' + n + ')' + base.slice(dot) : base + '(' + n + ')';
+        full = path.join(DL_DIR, name); n++;
+    }
+    return { name, full };
+}
+function _dlRecord(name: string, full: string, size: number, srcUrl: string, contentType: string, acct: string): void {
+    try {
+        const list = _dlReadIndex();
+        list.unshift({
+            id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
+            name, path: full, size, url: srcUrl || '', contentType: contentType || '', account: acct || '', time: Date.now(),
+        });
+        _dlWriteIndex(list);
+    } catch { /* 守柔 */ }
+}
+// 反代附件捕获: 把响应体落盘 + 入索引(浏览器下载列表)
+function captureProxyDownload(body: Buffer, cd: string, srcUrl: string, contentType: string, acct: string): void {
+    try {
+        fs.mkdirSync(DL_DIR, { recursive: true });
+        const u = _dlUniquePath(_dlFilenameFromCD(cd, srcUrl));
+        fs.writeFileSync(u.full, body);
+        _dlRecord(u.name, u.full, body.length, srcUrl, contentType, acct);
+    } catch { /* 守柔 */ }
+}
+// SPA blob/anchor 下载(注入脚本经 postMessage 回传 base64) → 落盘 + 入索引
+function captureBlobDownload(name: string, b64: string, srcUrl: string, contentType: string, acct: string): { ok: boolean; name?: string; path?: string; error?: string } {
+    try {
+        fs.mkdirSync(DL_DIR, { recursive: true });
+        const buf = Buffer.from(String(b64 || ''), 'base64');
+        const u = _dlUniquePath(_dlSafeName(name || 'download'));
+        fs.writeFileSync(u.full, buf);
+        _dlRecord(u.name, u.full, buf.length, srcUrl, contentType, acct);
+        return { ok: true, name: u.name, path: u.full };
+    } catch (e: any) { return { ok: false, error: String((e && e.message) || e) }; }
+}
+// 下载列表: 校验文件仍在(已被外部删除则剔除), 返回精简项
+function dlListDownloads(): any[] {
+    const list = _dlReadIndex();
+    const out: any[] = [];
+    let changed = false;
+    for (const it of list) {
+        let exists = false, size = it.size || 0;
+        try { const st = fs.statSync(it.path); exists = st.isFile(); size = st.size; } catch { exists = false; }
+        if (!exists) { changed = true; continue; }
+        out.push({ id: it.id, name: it.name, path: it.path, size, url: it.url || '', contentType: it.contentType || '', account: it.account || '', time: it.time || 0 });
+    }
+    if (changed) _dlWriteIndex(out.map((o) => ({ ...o })));
+    return out;
+}
+function dlDeleteDownload(id: string, removeFile: boolean): void {
+    const list = _dlReadIndex();
+    const keep: any[] = [];
+    for (const it of list) {
+        if (it.id === id) { if (removeFile) { try { fs.unlinkSync(it.path); } catch { /* 守柔 */ } } continue; }
+        keep.push(it);
+    }
+    _dlWriteIndex(keep);
+}
+function dlClearDownloads(removeFiles: boolean): void {
+    if (removeFiles) { for (const it of _dlReadIndex()) { try { fs.unlinkSync(it.path); } catch { /* 守柔 */ } } }
+    _dlWriteIndex([]);
+}
+
+// ═══════════════════════════════════════════════════════════
 // 反向代理路由 · 帛书·四十一「反者道之动」
 // /devin-cloud/* → https://app.devin.ai/*
 // /devin-cloud-ws/* → https://windsurf.com/*
@@ -9422,6 +9516,15 @@ async function devinCloudProxyRoute(route: string, url: URL, req: any, mode: str
                         else res(rawBody);
                     });
 
+                    // 浏览器式下载列表 · 与对话备份分治: 附件响应落盘 + 入索引(原响应仍照常透传)
+                    try {
+                        const _cd = String(proxyRes.headers['content-disposition'] || '');
+                        if (/attachment/i.test(_cd)) {
+                            let _acct = ''; try { _acct = url.searchParams.get('dao_acct') || ''; } catch { /* 守柔 */ }
+                            captureProxyDownload(decodedBody, _cd, targetUrl, contentType, _acct);
+                        }
+                    } catch { /* 守柔 */ }
+
                     if (isHtml && isPageRequest) {
                         // HTML页面: 改写绝对URL + 注入认证脚本
                         let html = decodedBody.toString('utf8');
@@ -9520,6 +9623,27 @@ async function devinCloudProxyRoute(route: string, url: URL, req: any, mode: str
     if (window.parent !== window) {
       window.parent.postMessage({type:'dao-loaded',mode:'${mode}'}, '*');
     }
+    // 6. 下载拦截(浏览器式下载列表) — a[download]/blob/data 经父窗口入下载列表;
+    //    http(s) 附件由代理侧 Content-Disposition 捕获, 此处只处理 blob/data 避免重复。
+    (function(){
+      function _dlSend(name, b64, ct){ try{ if(window.parent!==window) window.parent.postMessage({type:'dao-download',name:name||'download',b64:b64||'',contentType:ct||'',url:location.href}, '*'); }catch(e){} }
+      function _dlGrab(href, name){
+        try{
+          fetch(href).then(function(r){ var ct=r.headers.get('content-type')||''; return r.blob().then(function(b){return {b:b,ct:ct};}); }).then(function(o){
+            var fr=new FileReader(); fr.onload=function(){ var s=String(fr.result||''); var i=s.indexOf(','); _dlSend(name, i>=0?s.slice(i+1):'', o.ct); }; fr.readAsDataURL(o.b);
+          }).catch(function(){});
+        }catch(e){}
+      }
+      document.addEventListener('click', function(e){
+        try{
+          var a=e.target && e.target.closest && e.target.closest('a[download],a[href^="blob:"],a[href^="data:"]');
+          if(!a) return;
+          var href=a.getAttribute('href')||a.href||''; if(!href) return;
+          var name=(a.getAttribute('download')||(href.split('/').pop()||'').split('?')[0]||'download');
+          if(/^blob:|^data:/.test(href)){ _dlGrab(href, name); }
+        }catch(x){}
+      }, true);
+    })();
   } catch(e){}
 })();
 </script>`;

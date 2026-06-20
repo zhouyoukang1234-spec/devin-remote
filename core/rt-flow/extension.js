@@ -640,7 +640,33 @@ html.m #hint{font-size:14px;padding:18px}
   .li .b{padding:9px 13px;font-size:13px}
   #hint{font-size:14px;padding:18px}
   #daowin{width:96vw!important;height:84%!important;right:2vw!important;left:auto}
+  #dlwin{width:96vw!important;height:84%!important;right:2vw!important;left:auto}
 }
+/* ── 浏览器式下载列表悬浮窗(与对话备份分治 · 照电脑浏览器下载列表) ── */
+#dlwin{position:absolute;top:60px;right:30px;width:520px;height:70%;max-width:96vw;max-height:88%;background:#0e1116;border:1px solid #2a313c;border-radius:12px;box-shadow:0 18px 60px rgba(0,0,0,.6);z-index:27;display:none;flex-direction:column;overflow:hidden}
+#dlwin.on{display:flex}
+#dlwin .dwh{display:flex;align-items:center;gap:8px;padding:8px 11px;background:#161b22;border-bottom:1px solid #21262d;cursor:move;flex:0 0 auto;user-select:none}
+#dlwin .dwh .t{flex:1;font-size:13px;font-weight:700;color:#e6edf3;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#dlwin .dwbar{display:flex;gap:6px;align-items:center;padding:6px 8px;border-bottom:1px solid #21262d;flex:0 0 auto}
+#dlwin .srch{flex:1;min-width:80px;background:#0d1117;color:#cdd3de;border:1px solid #30363d;border-radius:6px;padding:6px 9px;font-size:12px;outline:none}
+#dlwin .srch:focus{border-color:#1f6feb}
+#dlwin .mini{background:#21262d;color:#cdd3de;border:1px solid #30363d;border-radius:6px;padding:6px 9px;font-size:12px;cursor:pointer;white-space:nowrap}
+#dlwin .mini:hover{background:#2d333b}
+#dlwin .dwx{background:#21262d;border:1px solid #30363d;border-radius:6px;color:#cdd3de;padding:5px 10px;font-size:12px;cursor:pointer;flex:0 0 auto}
+#dlwin .dlbody{flex:1;overflow:auto;padding:6px 8px 36px;position:relative}
+#dlwin .dl{display:flex;align-items:center;gap:10px;background:#161b22;border:1px solid #21262d;border-radius:8px;padding:8px 10px;margin-bottom:7px}
+#dlwin .dl .ic{flex:0 0 auto;width:30px;height:30px;border-radius:6px;background:#1c2733;display:flex;align-items:center;justify-content:center;font-size:16px}
+#dlwin .dl .mid{flex:1;min-width:0}
+#dlwin .dl .nm{font-size:13px;color:#58a6ff;cursor:pointer;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#dlwin .dl .nm:hover{text-decoration:underline}
+#dlwin .dl .mt{font-size:11px;color:#8b949e;margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#dlwin .dl .ops{flex:0 0 auto;display:flex;gap:5px}
+#dlwin .dl .op{background:#21262d;border:1px solid #30363d;border-radius:6px;color:#cdd3de;padding:4px 8px;font-size:12px;cursor:pointer}
+#dlwin .dl .op:hover{background:#2d333b}
+#dlwin .dl .op.del:hover{border-color:#f85149;color:#f85149}
+#dlwin .empty{color:#6e7681;text-align:center;padding:30px 12px;font-size:13px}
+#dlwin .dtoast{position:absolute;left:50%;bottom:16px;transform:translateX(-50%);background:#21262d;color:#e6edf3;border:1px solid #30363d;border-radius:8px;padding:8px 14px;font-size:12.5px;opacity:0;transition:.2s;pointer-events:none;z-index:40;max-width:90%}
+#dlwin .dtoast.show{opacity:1}#dlwin .dtoast.fail{border-color:#f85149}#dlwin .dtoast.ok{border-color:#3fb950}
 /* ── 归一 · 下载/备份悬浮窗(复刻手机端 APK daopan.html) ── */
 #daowin{position:absolute;top:44px;right:10px;width:560px;height:74%;max-width:96vw;max-height:88%;background:#0e1116;border:1px solid #2a313c;border-radius:12px;box-shadow:0 18px 60px rgba(0,0,0,.6);z-index:26;display:none;flex-direction:column;overflow:hidden}
 #daowin.on{display:flex}
@@ -714,8 +740,8 @@ html.m #hint{font-size:14px;padding:18px}
     <span id="zlbl" title="点击复位 100%">100%</span>
     <button class="tbtn" id="bZi" title="放大">A+</button>
     <button class="tbtn" id="bStar" title="收藏当前页">☆</button>
-    <button class="tbtn" id="bDl" title="下载 · 已备份/导出的对话文件">⬇</button>
-    <button class="tbtn" id="bBk" title="备份库 · 跨账号检索对话备份">📁</button>
+    <button class="tbtn" id="bDl" title="下载列表 · 网页里下载的文件(浏览器式)">⬇</button>
+    <button class="tbtn" id="bBk" title="备份库 · 跨账号检索对话备份(邮箱→对话)">📁</button>
     <button class="tbtn" id="bExt" title="用系统浏览器打开当前页">↗</button>
   </div>
   <div id="tabs"></div>
@@ -743,6 +769,12 @@ html.m #hint{font-size:14px;padding:18px}
     <div id="cv"><div class="cvtop"><button class="dwx" id="cvBack">‹ 返回</button><div class="cvtabs" id="cvTabs"></div></div><div class="cvacts" id="cvActs"></div><div class="cvbody" id="cvBody"></div></div>
   </div>
   <div class="dtoast" id="daotoast"></div>
+</div>
+<div id="dlwin">
+  <div class="dwh" id="dlHead"><span>⬇</span><span class="t" id="dlTitle">下载</span><button class="mini" id="dlOpenDir" title="打开下载目录">📂 目录</button><button class="mini" id="dlClear" title="清空下载列表(不删文件)">🧹 清空</button><button class="dwx" id="dlClose">✕ 关闭</button></div>
+  <div class="dwbar"><input class="srch" id="dlQ" placeholder="检索 文件名 / 来源…" autocomplete="off"/><button class="mini" id="dlRefresh">🔄 刷新</button></div>
+  <div class="dlbody" id="dlBody"><div class="empty">加载中…</div></div>
+  <div class="dtoast" id="dltoast"></div>
 </div>
 <script>
 (function(){
@@ -1065,7 +1097,29 @@ _dEl('cvBack').onclick=daoHideCv;
   hd.addEventListener('mousedown',function(e){if(e.target&&e.target.id==='dwClose')return;drag=true;var r=w.getBoundingClientRect();dx=e.clientX-r.left;dy=e.clientY-r.top;w.style.right='auto';w.style.left=r.left+'px';w.style.top=r.top+'px';e.preventDefault();});
   window.addEventListener('mousemove',function(e){if(!drag)return;var x=Math.max(0,Math.min(window.innerWidth-90,e.clientX-dx)),y=Math.max(0,Math.min(window.innerHeight-40,e.clientY-dy));w.style.left=x+'px';w.style.top=y+'px';});
   window.addEventListener('mouseup',function(){drag=false;});})();
-document.getElementById('bDl').onclick=function(){daoOpen('recent');};
+// ── 浏览器式下载列表(与对话备份分治): ⬇ 打开独立可拖拽悬浮窗, 列出在路由网页里下载的文件 ──
+var DL_LIST=[],_dlWinOpen=false,_dlQ='';
+function _dlFmtSize(n){n=+n||0;if(n<1024)return n+' B';if(n<1048576)return (n/1024).toFixed(1)+' KB';if(n<1073741824)return (n/1048576).toFixed(1)+' MB';return (n/1073741824).toFixed(2)+' GB';}
+function _dlWhen(ms){try{return ms?new Date(ms).toLocaleString():'';}catch(e){return '';}}
+function _dlHost(u){try{return u?new URL(u).host:'';}catch(e){return '';}}
+function _dlIcon(n){n=String(n||'').toLowerCase();if(/\.(png|jpe?g|gif|webp|svg|bmp|ico)$/.test(n))return '🖼';if(/\.(zip|tar|gz|rar|7z)$/.test(n))return '📦';if(/\.(md|txt|log)$/.test(n))return '📄';if(/\.(json|ya?ml|xml|csv)$/.test(n))return '🗂';if(/\.(js|ts|py|go|rs|java|c|cpp|sh|html?|css)$/.test(n))return '📜';if(/\.pdf$/.test(n))return '📕';return '⬇';}
+function _dlEsc(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
+function dlReq(){vscode.postMessage({type:'dlList'});}
+function dlOpen(){_dEl('dlwin').className='on';_dlWinOpen=true;dlRender();dlReq();}
+function dlClose(){_dEl('dlwin').className='';_dlWinOpen=false;}
+function dlToast(t,bad){var el=_dEl('dltoast');if(!el)return;el.textContent=t;el.className='dtoast show'+(bad?' fail':' ok');clearTimeout(el._t);el._t=setTimeout(function(){el.className='dtoast';},2200);}
+function dlRender(){var box=_dEl('dlBody');if(!box)return;var q=(_dlQ||'').trim().toLowerCase();var rows=DL_LIST.filter(function(d){return !q||String(d.name||'').toLowerCase().indexOf(q)>=0||String(d.url||'').toLowerCase().indexOf(q)>=0;});var tt=_dEl('dlTitle');if(tt)tt.textContent='下载 ('+rows.length+')';if(!rows.length){box.innerHTML='<div class="empty">暂无下载 · 在路由的 Devin 网页里下载文件即会进入此列表(与对话备份分治)</div>';return;}var h='';for(var i=0;i<rows.length;i++){var d=rows[i];var meta=_dlFmtSize(d.size)+' · '+_dlWhen(d.time)+(_dlHost(d.url)?(' · '+_dlEsc(_dlHost(d.url))):'');h+='<div class="dl" data-id="'+_dlEsc(d.id)+'"><div class="ic">'+_dlIcon(d.name)+'</div><div class="mid"><div class="nm" data-open="'+_dlEsc(d.path)+'" title="打开 '+_dlEsc(d.name)+'">'+_dlEsc(d.name)+'</div><div class="mt" title="'+_dlEsc(d.path)+'">'+meta+'</div></div><div class="ops"><span class="op" data-reveal="'+_dlEsc(d.path)+'" title="打开所在文件夹">📂</span><span class="op del" data-del="'+_dlEsc(d.id)+'" title="从列表移除">✕</span></div></div>';}box.innerHTML=h;}
+_dEl('dlBody').addEventListener('click',function(e){var t=e.target.closest&&e.target.closest('[data-open],[data-reveal],[data-del]');if(!t)return;var op=t.getAttribute('data-open');if(op){vscode.postMessage({type:'shellOpenFile',path:op});dlToast('打开文件…');return;}var rv=t.getAttribute('data-reveal');if(rv){vscode.postMessage({type:'shellRevealFile',path:rv});return;}var dl=t.getAttribute('data-del');if(dl){vscode.postMessage({type:'dlDelete',id:dl,removeFile:false});DL_LIST=DL_LIST.filter(function(x){return x.id!==dl;});dlRender();dlToast('已从列表移除');return;}});
+_dEl('dlQ').oninput=function(){_dlQ=this.value;dlRender();};
+_dEl('dlRefresh').onclick=dlReq;
+_dEl('dlClose').onclick=dlClose;
+_dEl('dlOpenDir').onclick=function(){vscode.postMessage({type:'dlOpenDir'});dlToast('打开下载目录…');};
+_dEl('dlClear').onclick=function(){vscode.postMessage({type:'dlClear',removeFiles:false});DL_LIST=[];dlRender();dlToast('已清空下载列表');};
+(function(){var w=_dEl('dlwin'),hd=_dEl('dlHead'),dx=0,dy=0,drag=false;if(!w||!hd)return;
+  hd.addEventListener('mousedown',function(e){if(e.target&&(e.target.id==='dlClose'||e.target.id==='dlClear'||e.target.id==='dlOpenDir'))return;drag=true;var r=w.getBoundingClientRect();dx=e.clientX-r.left;dy=e.clientY-r.top;w.style.right='auto';w.style.left=r.left+'px';w.style.top=r.top+'px';e.preventDefault();});
+  window.addEventListener('mousemove',function(e){if(!drag)return;var x=Math.max(0,Math.min(window.innerWidth-90,e.clientX-dx)),y=Math.max(0,Math.min(window.innerHeight-40,e.clientY-dy));w.style.left=x+'px';w.style.top=y+'px';});
+  window.addEventListener('mouseup',function(){drag=false;});})();
+document.getElementById('bDl').onclick=function(){dlOpen();};
 document.getElementById('bBk').onclick=function(){daoOpen('backup');};
 document.getElementById('bMenu').onclick=function(e){e.stopPropagation();toggleMenu();};
 document.getElementById('bAdd').onclick=function(e){e.stopPropagation();var em='';try{var t=tabs[active];if(t&&t.email)em=t.email;}catch(_){}vscode.postMessage({type:'newDevinTab',email:em});};
@@ -1146,6 +1200,9 @@ window.addEventListener('message',function(ev){var m=ev.data||{};
   else if(m.type==='gotoBoard'){try{openBoard(m.board||'home');}catch(e){}}
   else if(m.type==='restoreTabs'){try{restoreTabs(m.tabs);}catch(e){}}
   else if(m.type==='cloudHost'){_boardHostAll(m.msg||{});}
+  else if(m.type==='dao-download'){vscode.postMessage({type:'dlBlobSave',name:m.name,b64:m.b64,url:m.url,contentType:m.contentType});}
+  else if(m.type==='dlListData'){DL_LIST=m.list||[];if(_dlWinOpen)dlRender();}
+  else if(m.type==='dlSaved'){try{dlToast(m.ok?('✓ 已下载 · '+(m.name||'')):'下载失败',!m.ok);}catch(e){}if(_dlWinOpen)dlReq();}
   else if(m.type==='shellBackupsData'){_bkTree=m.tree||{root:'',accounts:[]};if(OV.className){if(_bkMode==='dl')renderDownloads();else if(_bkMode==='bk')renderBkLib();}try{daoRenderBackup();}catch(e){}}
   else if(m.type==='dlRecentData'){try{daoOnRecent(m);}catch(e){}}
   else if(m.type==='dlExportData'){try{daoOnExport(m);}catch(e){}}
@@ -1655,6 +1712,29 @@ async function shellHandleMessage(sid, m) {
         } catch (e) { send({ type: 'shellBackupsData', tree: { root: '', accounts: [] }, error: String((e && e.message) || e) }); }
         return;
       }
+      case 'shellOpenFile':
+        if (m.path) { try { await vscode.commands.executeCommand('simpleBrowser.show', vscode.Uri.file(m.path).toString()); } catch (e) { try { await vscode.env.openExternal(vscode.Uri.file(m.path)); } catch (e2) {} } }
+        return;
+      case 'shellRevealFile':
+        if (m.path) { try { await vscode.commands.executeCommand('revealFileInOS', vscode.Uri.file(m.path)); } catch (e) {} }
+        return;
+      // 浏览器式下载列表(与对话备份分治)
+      case 'dlList':
+        send({ type: 'dlListData', list: dlListDownloads() }); return;
+      case 'dlDelete':
+        try { dlDeleteDownload(m.id, !!m.removeFile); } catch (e) {}
+        send({ type: 'dlListData', list: dlListDownloads() }); return;
+      case 'dlClear':
+        try { dlClearDownloads(!!m.removeFiles); } catch (e) {}
+        send({ type: 'dlListData', list: dlListDownloads() }); return;
+      case 'dlOpenDir':
+        try { fs.mkdirSync(DL_DIR, { recursive: true }); await vscode.commands.executeCommand('revealFileInOS', vscode.Uri.file(DL_DIR)); } catch (e) {}
+        return;
+      case 'dlBlobSave': {
+        let r = { ok: false }; try { r = dlSaveBlob(m.name, m.b64, m.url, m.contentType, m.account); } catch (e) {}
+        send({ type: 'dlSaved', ok: !!r.ok, name: r.name || m.name });
+        send({ type: 'dlListData', list: dlListDownloads() }); return;
+      }
       case 'cloudInit': {
         if (!_cloudProvider) { send({ type: 'toast', text: '六大板块面板未就绪' }); return; }
         // 按会话隔离: buildHtml 与其触发的宿主回推仅发给本 sid (道并行而不相悖)
@@ -1835,6 +1915,12 @@ function _wireMultiPanel(panel) {
         try { await vscode.commands.executeCommand("revealFileInOS", vscode.Uri.file(m.path)); } catch (e) {}
         return;
       }
+      // 浏览器式下载列表(与对话备份分治)
+      if (m.type === "dlList") { try { panel.webview.postMessage({ type: "dlListData", list: dlListDownloads() }); } catch (e) {} return; }
+      if (m.type === "dlDelete") { try { dlDeleteDownload(m.id, !!m.removeFile); } catch (e) {} try { panel.webview.postMessage({ type: "dlListData", list: dlListDownloads() }); } catch (e) {} return; }
+      if (m.type === "dlClear") { try { dlClearDownloads(!!m.removeFiles); } catch (e) {} try { panel.webview.postMessage({ type: "dlListData", list: dlListDownloads() }); } catch (e) {} return; }
+      if (m.type === "dlOpenDir") { try { fs.mkdirSync(DL_DIR, { recursive: true }); await vscode.commands.executeCommand("revealFileInOS", vscode.Uri.file(DL_DIR)); } catch (e) {} return; }
+      if (m.type === "dlBlobSave") { let r = { ok: false }; try { r = dlSaveBlob(m.name, m.b64, m.url, m.contentType, m.account); } catch (e) {} try { panel.webview.postMessage({ type: "dlSaved", ok: !!r.ok, name: r.name || m.name }); panel.webview.postMessage({ type: "dlListData", list: dlListDownloads() }); } catch (e) {} return; }
       if (m.type === "favAdd") {
         if (m.board) {
           const bkey = "board:" + m.board;
@@ -2762,6 +2848,33 @@ const _httpsAgent = new https.Agent({
   scheduling: "fifo",
 });
 const WAM_DIR = path.join(os.homedir(), ".wam");
+// 浏览器式下载列表(与对话备份分治): 反代附件 + SPA blob 下载落盘此处, ⬇ 悬浮窗据此渲染。
+const DL_DIR = path.join(WAM_DIR, "downloads");
+const DL_INDEX = path.join(DL_DIR, "_index.json");
+function _dlReadIndex() { try { const a = JSON.parse(fs.readFileSync(DL_INDEX, "utf8")); return Array.isArray(a) ? a : []; } catch (e) { return []; } }
+function _dlWriteIndex(list) { try { fs.mkdirSync(DL_DIR, { recursive: true }); fs.writeFileSync(DL_INDEX, JSON.stringify(list.slice(0, 500), null, 2), "utf8"); } catch (e) {} }
+function _dlSafeName(s) { return String(s || "").replace(/[\\\/:*?"<>|\r\n]/g, "_").replace(/^\.+/, "_").slice(0, 150) || ("download_" + Date.now()); }
+function _dlUniquePath(base) { let name = base, full = path.join(DL_DIR, name), n = 1; while (fs.existsSync(full)) { const dot = base.lastIndexOf("."); name = dot > 0 ? base.slice(0, dot) + "(" + n + ")" + base.slice(dot) : base + "(" + n + ")"; full = path.join(DL_DIR, name); n++; } return { name, full }; }
+function dlListDownloads() {
+  const list = _dlReadIndex(), out = []; let changed = false;
+  for (const it of list) { let exists = false, size = it.size || 0; try { const st = fs.statSync(it.path); exists = st.isFile(); size = st.size; } catch (e) { exists = false; } if (!exists) { changed = true; continue; } out.push({ id: it.id, name: it.name, path: it.path, size, url: it.url || "", contentType: it.contentType || "", account: it.account || "", time: it.time || 0 }); }
+  if (changed) _dlWriteIndex(out);
+  return out;
+}
+function dlDeleteDownload(id, removeFile) { const list = _dlReadIndex(), keep = []; for (const it of list) { if (it.id === id) { if (removeFile) { try { fs.unlinkSync(it.path); } catch (e) {} } continue; } keep.push(it); } _dlWriteIndex(keep); }
+function dlClearDownloads(removeFiles) { if (removeFiles) { for (const it of _dlReadIndex()) { try { fs.unlinkSync(it.path); } catch (e) {} } } _dlWriteIndex([]); }
+function dlSaveBlob(name, b64, srcUrl, contentType, acct) {
+  try {
+    fs.mkdirSync(DL_DIR, { recursive: true });
+    const buf = Buffer.from(String(b64 || ""), "base64");
+    const u = _dlUniquePath(_dlSafeName(name || "download"));
+    fs.writeFileSync(u.full, buf);
+    const list = _dlReadIndex();
+    list.unshift({ id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6), name: u.name, path: u.full, size: buf.length, url: srcUrl || "", contentType: contentType || "", account: acct || "", time: Date.now() });
+    _dlWriteIndex(list);
+    return { ok: true, name: u.name, path: u.full };
+  } catch (e) { return { ok: false, error: String((e && e.message) || e) }; }
+}
 const STATE_FILE = path.join(WAM_DIR, "wam-state.json");
 // v2.7.4 (补入v3.0.2) · 道恒无名·侯王若能守之·万物将自宾·民莫之令而自均焉 (三十二章)
 //   独立🔒持久化 · 专司一事 · 不被 multi-window race 污染 wam-state.json 大对象
