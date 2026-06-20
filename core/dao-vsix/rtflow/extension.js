@@ -263,6 +263,7 @@ const { URL } = require("node:url");
 const devinCloud = require("./devin_cloud");
 const devinWeb = require("./devin_web"); // v4.8.0 · 浏览器多实例隔离+账号注入 (自足·CDP 注入 auth1_session)
 const devinProxy = require("./devin_proxy"); // v4.8.2 · IDE 内置浏览器自足注入反代 (每账号独立端口·多实例·不赖 dao-vsix)
+const devinMirror = require("./devin_mirror"); // 归一投屏兜底 · 宿主真·官网本体 CDP 截帧+输入回传 (auth1 整窗登录态·只在服务端)
 const devinGit = require("./devin_git"); // 第三板块 · Git(GitHub) 接入 (整合 devin-git-auth 核心)
 
 // v4.8.2 · IDE 内置浏览器多实例 webview 标签登记 (email → WebviewPanel) · 同号复用·异号并行
@@ -871,8 +872,143 @@ function _shellCloudRun(sid, fn) {
   });
   return _shellCloudQueue;
 }
+// ── 归一 · 公网同源前缀 · dao 自渲染 (道并行而不相悖) ──────────────────────────
+// 病灶其一(已解): _shellResolveOpen 旧返 `http://localhost:<随机端口>/…`(绑 127.0.0.1·公网打不开)。
+// 病灶其二(根本): 现版 Devin 官网迁移到 Auth0/SSO, 账号密码登录只得旧 auth1 令牌、官网 SPA 已不收;
+//   故「内嵌官网 SPA + 注入 auth1_session」对密码池账号根本走不通(IDE 内多实例按钮失效亦同因)。
+// 归一正解: 每账号映射到不可枚举 accKey, 经主口 9920 同源路径 `/i/<accKey>/*` 暴露; 该路径不再反代
+//   官网 SPA, 改由 dao 用 auth1 调内部 REST API、服务端自渲染原生页(对话列表 / 对话视图)——Auth0 免疫、
+//   令牌只在服务端、手机(APK 网页)与电脑(归一网页)前端/逻辑一致。隧道主口直达, 公网设备无感访问。
+// ── 同源前缀路由判定 (纯函数·可单测) ──
+//   '/sessions/<id>' → 原生对话视图; '/__dao/create'(POST) → 新建对话; '/__dao/sessions' → JSON 列表;
+//   '/favicon.ico' → 204; 其余(含根 '/') → 原生对话列表。
+function _shellAccRoute(pathOnly) {
+  const p = String(pathOnly || '/') || '/';
+  if (p === '/favicon.ico') return { kind: 'favicon' };
+  if (p === '/__dao/create') return { kind: 'create' };
+  if (p === '/__dao/sessions') return { kind: 'sessionsJson' };
+  if (p === '/__mirror/frame') return { kind: 'mirrorFrame' };
+  if (p === '/__mirror/input') return { kind: 'mirrorInput' };
+  if (p === '/__mirror/nav') return { kind: 'mirrorNav' };
+  if (p === '/mirror') return { kind: 'mirror' };
+  const m = p.match(/^\/sessions\/([^\/?]+)/);
+  if (m) return { kind: 'conv', id: decodeURIComponent(m[1]) };
+  return { kind: 'list' };
+}
+const _shellAccSalt = crypto.randomBytes(16).toString('hex'); // 进程级盐 → accKey 不可枚举(防公网猜测)
+const _shellAccByKey = new Map();   // accKey → emailLower
+const _shellAccByEmail = new Map(); // emailLower → accKey
+function _shellAccKey(email) {
+  const e = String(email || '').toLowerCase();
+  let k = _shellAccByEmail.get(e);
+  if (k) return k;
+  k = 'a' + crypto.createHmac('sha256', _shellAccSalt).update(e).digest('hex').slice(0, 20);
+  _shellAccByEmail.set(e, k);
+  _shellAccByKey.set(k, e);
+  return k;
+}
+// 主口 9920 的 /i/<accKey>/* 路由就地调用: 解析账号 auth → dao 用 auth1 调内部 REST API 服务端自渲染。
+//   restPath 为已剥 `/i/<accKey>` 的同源路径 (含 query)。直接写 res (流式)。令牌只在服务端, 不下发浏览器。
+async function shellAccountProxy(accKey, restPath, req, res) {
+  const _txt = (status, s) => { if (res && !res.headersSent) { res.writeHead(status, { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-store' }); } if (res) res.end(s); };
+  const _html = (status, s) => {
+    if (res && !res.headersSent) {
+      res.writeHead(status, {
+        'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store',
+        'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src data:; connect-src 'self'; form-action 'self'",
+      });
+    }
+    if (res) res.end(s);
+  };
+  const _json = (status, obj) => { if (res && !res.headersSent) { res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' }); } if (res) res.end(JSON.stringify(obj)); };
+  try {
+    const email = _shellAccByKey.get(String(accKey || ''));
+    if (!email) { _txt(404, 'unknown account'); return; }
+    const base = '/i/' + accKey;
+    let rest = String(restPath == null ? '/' : restPath);
+    if (rest.charAt(0) !== '/') rest = '/' + rest;
+    const qIdx = rest.indexOf('?');
+    const pathOnly = qIdx >= 0 ? rest.slice(0, qIdx) : rest;
+    const route = _shellAccRoute(pathOnly);
+    if (route.kind === 'favicon') { if (res && !res.headersSent) res.writeHead(204); if (res) res.end(); return; }
+
+    const auth = await _resolveAuthForEmail(email);
+    if (!auth || !auth.auth1) {
+      // 账号未登录: 列表/对话给出可读原生页, 接口给 JSON
+      if (route.kind === 'create' || route.kind === 'sessionsJson') { _json(502, { ok: false, error: 'account not logged in' }); return; }
+      _html(502, devinCloud.buildSessionsListHtml(email, [], { base, error: '账号未登录 · 请在切号面板登录后重试' }));
+      return;
+    }
+    const authObj = { auth1: auth.auth1, userId: auth.userId, orgId: auth.orgId, orgBare: auth.orgBare, orgName: auth.orgName, email };
+
+    if (route.kind === 'create') {
+      let body = '';
+      await new Promise((resolve) => {
+        try { req.on('data', (d) => { body += d; if (body.length > 1e6) body = body.slice(0, 1e6); }); req.on('end', resolve); req.on('error', resolve); }
+        catch (e) { resolve(); }
+      });
+      let prompt = '';
+      try { const j = JSON.parse(body || '{}'); prompt = String(j.prompt || j.user_message || ''); } catch (e) {}
+      if (!prompt.trim()) { _json(400, { ok: false, error: 'empty prompt' }); return; }
+      const r = await devinCloud.createSession(authObj, prompt);
+      if (r && r.ok && r.devinId) _json(200, { ok: true, devinId: r.devinId, url: base + '/sessions/' + encodeURIComponent(r.devinId) });
+      else _json(502, { ok: false, error: (r && r.error) || 'create failed' });
+      return;
+    }
+    if (route.kind === 'sessionsJson') {
+      const r = await devinCloud.listSessions(authObj, 200);
+      _json(r && r.ok ? 200 : 502, r && r.ok ? { ok: true, sessions: r.sessions } : { ok: false, error: (r && r.error) || 'list failed' });
+      return;
+    }
+    if (route.kind === 'conv') {
+      let events = [];
+      try { events = await devinCloud.getEventStream(authObj, route.id); } catch (e) { events = []; }
+      let title = route.id;
+      try { const d = await devinCloud.getSessionDetail(authObj, route.id); if (d && (d.title || d.name)) title = d.title || d.name; } catch (e) {}
+      _html(200, devinCloud.buildConversationHtml(title, route.id, events || [], { account: email, base }));
+      return;
+    }
+    // ── 投屏兜底: 宿主真·官网本体 CDP 截帧 + 归一化输入回传 (auth1 整窗登录态, 只在服务端) ──
+    if (route.kind === 'mirror') {
+      const qp = new URLSearchParams(qIdx >= 0 ? rest.slice(qIdx + 1) : '');
+      _html(200, devinCloud.buildMirrorHtml(email, { base, path: qp.get('path') || '' }));
+      return;
+    }
+    if (route.kind === 'mirrorFrame') {
+      const qp = new URLSearchParams(qIdx >= 0 ? rest.slice(qIdx + 1) : '');
+      try {
+        const fr = await devinMirror.frame(accKey, authObj, { quality: parseInt(qp.get('q'), 10) || 55 });
+        _json(fr && fr.ok ? 200 : 502, fr || { ok: false, error: 'no frame' });
+      } catch (e) { _json(502, { ok: false, error: (e && e.message) || 'mirror frame fail' }); }
+      return;
+    }
+    if (route.kind === 'mirrorInput' || route.kind === 'mirrorNav') {
+      let body = '';
+      await new Promise((resolve) => {
+        try { req.on('data', (d) => { body += d; if (body.length > 1e5) body = body.slice(0, 1e5); }); req.on('end', resolve); req.on('error', resolve); }
+        catch (e) { resolve(); }
+      });
+      let j = {}; try { j = JSON.parse(body || '{}'); } catch (e) {}
+      try {
+        const r = route.kind === 'mirrorNav'
+          ? await devinMirror.navigate(accKey, authObj, String(j.path || ''))
+          : await devinMirror.input(accKey, authObj, j);
+        _json(r && r.ok ? 200 : 502, r || { ok: false });
+      } catch (e) { _json(502, { ok: false, error: (e && e.message) || 'mirror input fail' }); }
+      return;
+    }
+    // 默认: 原生对话列表
+    const lr = await devinCloud.listSessions(authObj, 200);
+    _html(200, devinCloud.buildSessionsListHtml(email, (lr && lr.ok ? lr.sessions : []) || [], {
+      base, orgName: auth.orgName || auth.orgId || '', error: (lr && lr.ok) ? '' : ((lr && lr.error) || ''),
+    }));
+  } catch (e) {
+    _txt(500, 'render fail: ' + (e && e.message));
+  }
+}
 // 解析「开一个账号标签」的元数据 (同 openMultiInstance 的反代解析, 但不创建 webview —
 // 独立页自身经 mkTab 以 iframe 开标签)。返回与 webview 'open' 消息同形的对象。
+//   归一: url 改为同源相对 `/i/<accKey>/…` → IDE 内置浏览器(localhost:9920)与公网隧道两端皆可达。
 async function _shellResolveOpen(opts) {
   opts = opts || {};
   const email = String(opts.email || '').trim();
@@ -880,11 +1016,7 @@ async function _shellResolveOpen(opts) {
   const sid = String(opts.devinId || '').trim().replace(/^devin-/, '');
   const auth = await _resolveAuthForEmail(email, opts.password);
   if (!auth || !auth.auth1) return null;
-  const pr = await devinProxy.ensureProxyForAccount(
-    email, { auth1: auth.auth1, userId: auth.userId, orgId: auth.orgId, orgName: auth.orgName }, log,
-  );
-  if (!pr.ok) return null;
-  const base = String(pr.url || ('http://localhost:' + pr.port + '/')).replace(/\/+$/, '');
+  const base = '/i/' + _shellAccKey(email); // 同源相对前缀 (隧道主口 9920 直达·公网设备无感)
   const pageRaw = String(opts.path || '').trim();
   const pagePath = pageRaw ? ('/' + pageRaw.replace(/^\/+/, '')) : '';
   const url = pagePath ? (base + pagePath) : (sid ? (base + '/sessions/' + encodeURIComponent(sid)) : (base + '/'));
@@ -14690,6 +14822,9 @@ module.exports = {
     getStandaloneShellHtml: _standaloneShellHtml, // GET /shell → 直出同一外壳 (注入 HTTP 传输垫片)
     shellAttach: _shellAttach, // GET /api/shell/events → SSE 挂载 (宿主→页面)
     shellHandleMessage, // POST /api/shell/msg → 页面→宿主消息处理
+    shellAccountProxy, // GET/POST /i/<accKey>/* → dao 自渲染账号页 (公网手机/电脑无感·含多实例)
+    _shellAccKey, // (供单测) email → 稳定不可枚举 accKey
+    _shellAccRoute, // (供单测) 同源前缀路径 → 路由类型 (list/conv/create/sessionsJson/favicon)
     setCloudProvider(p) { _cloudProvider = p || null; }, // 归一 · dao-vsix 注入「六大板块」面板提供者
     parseAccountText,
     Store,

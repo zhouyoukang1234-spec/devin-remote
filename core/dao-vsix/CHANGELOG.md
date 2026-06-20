@@ -2,6 +2,48 @@
 
 道法自然 · 无为而无不为。仅记录与「内网穿透 / dao-bridge / 知识库反向注入」相关的关键变更。
 
+## 3.39.0
+- 归一网页公网传输「分层混合」落地（道并行而不相悖）：dao 自渲染为主干，新增
+  「投屏兜底」补齐官网 100% 功能（含回信/Automations/Review/Wiki/设置）。
+- 实测纠偏：宿主整窗浏览器经 devin_web 注入 auth1（含迁移标志）可**直登官网 SPA**，
+  此前「auth1 被 Auth0 挡」实为 iframe 内嵌特有（第三方存储分区/CSP），整窗不受限。
+  故续写已有对话 **无需 apk_** —— 经投屏在官网本体内即可原样回信。
+- 新增 `core/rt-flow/devin_mirror.js`：宿主真·官网本体的 CDP 截帧（Page.captureScreenshot·
+  JPEG）+ 归一化坐标输入回传（Input.dispatch*），自管浏览器生命周期（close 真杀进程，
+  防残留占 profile 夺端口）。令牌只在服务端，浏览器只见像素与归一化输入。
+- 路由 `/i/<accKey>/`：新增 `/mirror`（投屏视图）、`/__mirror/frame`（截帧）、
+  `/__mirror/input`（输入）、`/__mirror/nav`（导航）；对话视图加「🖥️ 官网本体」入口。
+  手机/电脑共用同一 `buildMirrorHtml` viewer（同源帧轮询 data: URL + 同源输入 POST）。
+- 单测 +5（投屏路由/委托·viewer 同源帧与输入·令牌不下发·防注入·vendor 含 devin_mirror）
+  共 108/0 全绿；dao-vsix/dao-one 构建 + render_check 通过；vendor 字节一致。
+
+## 3.38.0
+- 归一网公传「dao 自渲染」正解（Auth0 免疫·手机+电脑完全一致）：现版 Devin 官网
+  已迁 Auth0/SSO，账号密码登录只得旧 auth1 令牌、官网 SPA 已不收 → 「内嵌官网 SPA +
+  注入 auth1_session」对密码池账号根本走不通（IDE 内多实例按钮失效亦同因）。
+- `/i/<accKey>/*` 不再反代官网 SPA，改由 dao 用 auth1 调内部 REST API、服务端自渲染
+  原生页：根 `/` → 对话列表（buildSessionsListHtml·检索/刷新/新建对话）；
+  `/sessions/<id>` → 原生对话视图（getEventStream → buildConversationHtml·四类气泡/
+  思考折叠/全文搜索/用户消息定位）；`/__dao/create`(POST) → 新建对话（auth1）。
+  令牌只在服务端、绝不下发浏览器；同源前缀不变、多实例隔离不变。
+- 手机（APK 网页）与电脑（归一网页）共用同一组原生渲染件，前端/逻辑完全一致。
+- 单测 +6（buildSessionsListHtml 链接/计数/状态/空与失败/转义 + 对话视图回链），共 103/0 全绿。
+- 注：续写已有对话（sendMessage）需 Devin API Key（apk_·公开 API 不收 auth1），属平台契约
+  约束；列表/查看/新建/检索均 auth1 即可，与手机端「备管」一致。
+
+## 3.37.0
+- 归一网页公网传输无感设备使用（道并行而不相悖）：`/shell` 经 DAO Bridge 隧道主口
+  9920 暴露后，公网手机/电脑浏览器打开「Devin 对话页 / 多实例号页」iframe 不再指向
+  `http://localhost:<随机端口>`（绑 127.0.0.1·未隧道暴露·公网 404），改走**同源路径
+  前缀** `/i/<accKey>/*` 直达。`_shellResolveOpen` 返回同源相对 URL；rt-flow
+  `devin_proxy` 新增前缀模式（rewriteBase=`/i/<accKey>`）：HTML/JS 根绝对引用补前缀、
+  运行时 fetch/XHR/EventSource(SSE) 补前缀+鉴权、缓存按基址重定基。
+- 同源多实例隔离：同源前缀下所有账号 iframe 共用一 origin，桥接脚本按 accKey 给
+  localStorage 加私有命名空间（get/set/remove/clear 全包）→ 各账号互不串号。端口模式
+  （IDE 内置浏览器·异 origin 本已隔离）不注入 shim，零回归。
+- 仅动传输层（外科手术式），不碰布局/面板渲染；并修复 3.36.0 的 vendor 脱钩
+  （面板代码回灌源 `core/rt-flow/`，恢复 源↔打包 一致）。
+
 ## 3.36.0
 - 下载/备份悬浮窗（复刻手机端 APK daopan.html）：⬇ 按钮打开「☁近期对话 / 🗂备份库」双标签悬浮窗；跨账号近期对话聚合（状态灯+账号编号+查看/进入/⬇MD/📦全部文件）；convView 多标签同时查看多条对话正文（自动抓取 MD、可逐条导出 MD/ZIP）；备份库按账号分组；搜索过滤、toast 提示、可拖拽标题栏。宿主端新增 dlRecent/dlExportMd/dlZip 数据通道（HTTP /shell 与 VS Code webview 两路均接）。
 - 主页路由：汉堡菜单「主页」与左上角 🏠 按钮 → 直接打开「六合一」组合板块（含主页在内的全六板侧栏导航）；🔀切号/🌐公网穿透/💬对话备份/💉反向注入/🧩MCP 仍各自独立单板，分而治之并存。
