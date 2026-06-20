@@ -759,7 +759,7 @@ html.m #hint{font-size:14px;padding:18px}
 <div id="tabctx"></div>
 <div id="ov"><div class="ov-top"><span class="ti" id="ovTi"></span><button class="tbtn" id="ovClose">✕ 关闭</button></div><div class="ov-body" id="ovBody"></div></div>
 <div id="daowin">
-  <div class="dwh" id="dwHead"><span>☁</span><span class="t" id="dwTitle">下载 / 备份库</span><button class="dwx" id="dwClose">✕ 关闭</button></div>
+  <div class="dwh" id="dwHead"><span>☁</span><span class="t" id="dwTitle">近期对话 / 备份库</span><button class="dwx" id="dwClose">✕ 关闭</button></div>
   <div class="dwtabs"><div class="dwtab on" id="dwTabR">☁ 近期对话</div><div class="dwtab" id="dwTabB">🗂 备份网页端</div></div>
   <div class="dwbar" id="dwBarR"><input class="srch" id="dwQ" placeholder="检索 账号 / 对话名称…" autocomplete="off"/><button class="mini" id="dwRefresh">🔄 刷新</button></div>
   <div class="dwbar" id="dwBarB" style="display:none"><input class="srch" id="dwBQ" placeholder="检索 账号 / 备份名称…" autocomplete="off"/><button class="mini" id="dwRoot">📁 根目录</button></div>
@@ -1072,7 +1072,7 @@ function daoRenderBackup(){var box=_dEl('dwBackup');if(!box)return;if(!_bkTree){
       body+='<div class="rc" draggable="true" data-cdrag="1" data-email="'+esc(a.email||a.account||'')+'" data-sid="'+esc(c.devinId||'')+'" data-title="'+esc(c.title||c.name||c.devinId||'')+'"><div class="r1"><span class="ti" title="'+esc(c.title||c.name||c.devinId||'')+'">'+esc(c.title||c.name||c.devinId||'(未命名)')+'</span></div><div class="meta"><span>'+_bkWhen(c.mtime)+(c.eventCount?(' · '+c.eventCount+' 事件'):'')+'</span></div>'+
         '<div class="acts">'+(c.hasHtml?'<span class="b pri" data-open="'+esc(c.htmlPath||'')+'">打开正文</span>':'')+'<span class="b" data-reveal="'+esc(c.path||c.htmlPath||a.dir||'')+'">文件夹</span></div></div>';}}
   box.innerHTML=body||'<div class="empty">无备份记录 · 先在「💬对话备份」板块备份或开启自动备份</div>';
-  var ttl=_dEl('dwTitle');if(ttl)ttl.textContent='下载 / 备份库 ('+na+'账号·'+nc+'对话)';}
+  var ttl=_dEl('dwTitle');if(ttl)ttl.textContent='近期对话 / 备份库 ('+na+'账号·'+nc+'对话)';}
 // 事件委托(CSP 安全): 所有悬浮窗内点击统一在 #daowin 上处理
 _dEl('daowin').addEventListener('click',function(e){var el=e.target.closest&&e.target.closest('[data-act],[data-cv],[data-cvact],[data-open],[data-reveal]');if(!el)return;
   var a=el.getAttribute('data-act');if(a){var idx=+el.getAttribute('data-idx');if(a==='view')daoView(idx);else if(a==='enter')daoEnter(idx);else if(a==='md')daoMd(idx);else if(a==='zip')daoZip(idx);return;}
@@ -1109,7 +1109,7 @@ function dlOpen(){_dEl('dlwin').className='on';_dlWinOpen=true;dlRender();dlReq(
 function dlClose(){_dEl('dlwin').className='';_dlWinOpen=false;}
 function dlToast(t,bad){var el=_dEl('dltoast');if(!el)return;el.textContent=t;el.className='dtoast show'+(bad?' fail':' ok');clearTimeout(el._t);el._t=setTimeout(function(){el.className='dtoast';},2200);}
 function dlRender(){var box=_dEl('dlBody');if(!box)return;var q=(_dlQ||'').trim().toLowerCase();var rows=DL_LIST.filter(function(d){return !q||String(d.name||'').toLowerCase().indexOf(q)>=0||String(d.url||'').toLowerCase().indexOf(q)>=0;});var tt=_dEl('dlTitle');if(tt)tt.textContent='下载 ('+rows.length+')';if(!rows.length){box.innerHTML='<div class="empty">暂无下载 · 在路由的 Devin 网页里下载文件即会进入此列表(与对话备份分治)</div>';return;}var h='';for(var i=0;i<rows.length;i++){var d=rows[i];var meta=_dlFmtSize(d.size)+' · '+_dlWhen(d.time)+(_dlHost(d.url)?(' · '+_dlEsc(_dlHost(d.url))):'');h+='<div class="dl" data-id="'+_dlEsc(d.id)+'"><div class="ic">'+_dlIcon(d.name)+'</div><div class="mid"><div class="nm" data-open="'+_dlEsc(d.path)+'" title="打开 '+_dlEsc(d.name)+'">'+_dlEsc(d.name)+'</div><div class="mt" title="'+_dlEsc(d.path)+'">'+meta+'</div></div><div class="ops"><span class="op" data-reveal="'+_dlEsc(d.path)+'" title="打开所在文件夹">📂</span><span class="op del" data-del="'+_dlEsc(d.id)+'" title="从列表移除">✕</span></div></div>';}box.innerHTML=h;}
-_dEl('dlBody').addEventListener('click',function(e){var t=e.target.closest&&e.target.closest('[data-open],[data-reveal],[data-del]');if(!t)return;var op=t.getAttribute('data-open');if(op){vscode.postMessage({type:'shellOpenFile',path:op});dlToast('打开文件…');return;}var rv=t.getAttribute('data-reveal');if(rv){vscode.postMessage({type:'shellRevealFile',path:rv});return;}var dl=t.getAttribute('data-del');if(dl){vscode.postMessage({type:'dlDelete',id:dl,removeFile:false});DL_LIST=DL_LIST.filter(function(x){return x.id!==dl;});dlRender();dlToast('已从列表移除');return;}});
+_dEl('dlBody').addEventListener('click',function(e){var t=e.target.closest&&e.target.closest('[data-open],[data-reveal],[data-del]');if(!t)return;var op=t.getAttribute('data-open');if(op){vscode.postMessage({type:'dlOpenFile',path:op});dlToast('打开文件…');return;}var rv=t.getAttribute('data-reveal');if(rv){vscode.postMessage({type:'shellRevealFile',path:rv});return;}var dl=t.getAttribute('data-del');if(dl){vscode.postMessage({type:'dlDelete',id:dl,removeFile:false});DL_LIST=DL_LIST.filter(function(x){return x.id!==dl;});dlRender();dlToast('已从列表移除');return;}});
 _dEl('dlQ').oninput=function(){_dlQ=this.value;dlRender();};
 _dEl('dlRefresh').onclick=dlReq;
 _dEl('dlClose').onclick=dlClose;
@@ -1730,6 +1730,9 @@ async function shellHandleMessage(sid, m) {
       case 'dlOpenDir':
         try { fs.mkdirSync(DL_DIR, { recursive: true }); await vscode.commands.executeCommand('revealFileInOS', vscode.Uri.file(DL_DIR)); } catch (e) {}
         return;
+      case 'dlOpenFile':
+        if (m.path) { try { await vscode.env.openExternal(vscode.Uri.file(m.path)); } catch (e) {} }
+        return;
       case 'dlBlobSave': {
         let r = { ok: false }; try { r = dlSaveBlob(m.name, m.b64, m.url, m.contentType, m.account); } catch (e) {}
         send({ type: 'dlSaved', ok: !!r.ok, name: r.name || m.name });
@@ -1920,6 +1923,7 @@ function _wireMultiPanel(panel) {
       if (m.type === "dlDelete") { try { dlDeleteDownload(m.id, !!m.removeFile); } catch (e) {} try { panel.webview.postMessage({ type: "dlListData", list: dlListDownloads() }); } catch (e) {} return; }
       if (m.type === "dlClear") { try { dlClearDownloads(!!m.removeFiles); } catch (e) {} try { panel.webview.postMessage({ type: "dlListData", list: dlListDownloads() }); } catch (e) {} return; }
       if (m.type === "dlOpenDir") { try { fs.mkdirSync(DL_DIR, { recursive: true }); await vscode.commands.executeCommand("revealFileInOS", vscode.Uri.file(DL_DIR)); } catch (e) {} return; }
+      if (m.type === "dlOpenFile" && m.path) { try { await vscode.env.openExternal(vscode.Uri.file(m.path)); } catch (e) {} return; }
       if (m.type === "dlBlobSave") { let r = { ok: false }; try { r = dlSaveBlob(m.name, m.b64, m.url, m.contentType, m.account); } catch (e) {} try { panel.webview.postMessage({ type: "dlSaved", ok: !!r.ok, name: r.name || m.name }); panel.webview.postMessage({ type: "dlListData", list: dlListDownloads() }); } catch (e) {} return; }
       if (m.type === "favAdd") {
         if (m.board) {
