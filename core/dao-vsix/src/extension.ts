@@ -1448,7 +1448,7 @@ async function handleRouteInternal(route: string, url: URL, req: any, token: str
     // ── 归一 · 拖拽上传桥数据源 (对齐手机 APK: 拖文件=上传该文件 / 拖会话=上传该会话 MD) ──
     //   网页内注入的 drop 桥与外壳同源, 落点后经此同源端点取字节 → 合成 File 喂入页面上传框。
     //   同一服务函数 daoServeBridgeRoute 亦注入 IDE 内多实例反代(devin_proxy)就地同源服务。
-    if (route === '/__dlfile' || route === '/__convmd' || route === '/__daobridge.js') {
+    if (route === '/__dlfile' || route === '/__convmd' || route === '/__daobridge.js' || route === '/__dropdiag') {
         const br = await daoServeBridgeRoute(route, url);
         if (br) return br;
     }
@@ -9424,6 +9424,16 @@ function fetchViaTunnel(u, headers, timeoutMs) {
 //   全部带 CORS, 故同源/跨域两用皆可。
 async function daoServeBridgeRoute(routePath: string, urlObj: URL): Promise<any> {
     const CORS = { 'Access-Control-Allow-Origin': '*' };
+    // 拖拽诊断打点 (落盘 ~/.dao/_dropdiag.log): 桥在各阶段经此 GET 上报 → 远程可读, 精确定位
+    //   "drop 没触发 / 跨 iframe 读不到拖拽数据 / 喂不进上传框" 哪一环。1x1 gif 应答·无副作用。
+    if (routePath === '/__dropdiag') {
+        try {
+            const ev = (urlObj.searchParams.get('ev') || '').slice(0, 40);
+            const d = (urlObj.searchParams.get('d') || '').slice(0, 300);
+            fs.appendFileSync(path.join(DAO_DIR, '_dropdiag.log'), new Date().toISOString() + ' ' + ev + ' ' + d + '\n');
+        } catch (e) { /* 守柔 */ }
+        return { _proxy: true, status: 200, contentType: 'image/gif', binary: true, body: 'R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==', headers: { 'Cache-Control': 'no-store', ...CORS } };
+    }
     if (routePath === '/__daobridge.js') {
         return { _proxy: true, status: 200, contentType: 'application/javascript; charset=utf-8', body: daoDropBridgeJs(), headers: { 'Cache-Control': 'no-store', ...CORS } };
     }
@@ -9458,11 +9468,12 @@ function daoDropBridgeJs() {
         "if(window.__daoDropBridge)return;window.__daoDropBridge=1;",
         "var ORIGIN=location.origin;",
         "function toast(t){try{var d=document.createElement('div');d.textContent=t;d.style.cssText='position:fixed;z-index:2147483647;left:50%;top:18px;transform:translateX(-50%);background:#11161d;color:#cdd3de;border:1px solid #2a313b;border-radius:8px;padding:8px 14px;font:13px sans-serif;box-shadow:0 4px 18px rgba(0,0,0,.45)';(document.body||document.documentElement).appendChild(d);setTimeout(function(){try{d.parentNode.removeChild(d);}catch(e){}},2800);}catch(e){}}",
+        "function bcn(ev,d){try{(new Image()).src=ORIGIN+'/__dropdiag?ev='+encodeURIComponent(ev)+'&d='+encodeURIComponent(String(d==null?'':d))+'&t='+Date.now();}catch(e){}}",
         "function mkFile(buf,ct,nm){try{return new File([buf],nm,{type:ct||'application/octet-stream'});}catch(e){var b=new Blob([buf],{type:ct||'application/octet-stream'});try{b.name=nm;}catch(e2){}return b;}}",
         "async function fetchFile(u,nm){var r=await fetch(u,{credentials:'same-origin'});if(!r.ok)throw new Error('HTTP '+r.status);var ct=r.headers.get('content-type')||'application/octet-stream';var buf=await r.arrayBuffer();return mkFile(buf,ct,nm);}",
         "function feed(target,file){var done=false;try{var dt=new DataTransfer();dt.items.add(file);var inps=document.querySelectorAll('input[type=file]');for(var k=0;k<inps.length;k++){try{inps[k].files=dt.files;inps[k].dispatchEvent(new Event('input',{bubbles:true}));inps[k].dispatchEvent(new Event('change',{bubbles:true}));done=true;}catch(e){}}try{var ev;try{ev=new DragEvent('drop',{bubbles:true,cancelable:true});Object.defineProperty(ev,'dataTransfer',{value:dt});}catch(e2){ev=new Event('drop',{bubbles:true,cancelable:true});ev.dataTransfer=dt;}(target||document.body).dispatchEvent(ev);done=true;}catch(e3){}}catch(e){}return done;}",
-        "document.addEventListener('dragover',function(e){try{var ts=(e.dataTransfer&&e.dataTransfer.types)||[];var has=false;for(var i=0;i<ts.length;i++){if(ts[i]==='application/x-dao-file'||ts[i]==='application/x-dao-conv')has=true;}if(has){e.preventDefault();try{e.dataTransfer.dropEffect='copy';}catch(x){}}}catch(x){}},true);",
-        "document.addEventListener('drop',function(e){try{var dtt=e.dataTransfer;if(!dtt)return;var fp='',cv='';try{fp=dtt.getData('application/x-dao-file');}catch(x){}try{cv=dtt.getData('application/x-dao-conv');}catch(x){}if(!fp&&!cv)return;e.preventDefault();e.stopPropagation();var tgt=e.target||document.body;toast('\\u23f3 \\u6b63\\u5728\\u4e0a\\u4f20\\u2026');(async function(){try{var f;if(fp){var o=JSON.parse(fp);f=await fetchFile(ORIGIN+'/__dlfile?p='+encodeURIComponent(o.path||''),(o.name||'file'));}else{var c=JSON.parse(cv);f=await fetchFile(ORIGIN+'/__convmd?email='+encodeURIComponent(c.email||'')+'&sid='+encodeURIComponent(c.sid||''),((c.title||c.sid||'conversation')+'.md'));}var ok=feed(tgt,f);toast(ok?('\\u2705 \\u5df2\\u6295\\u9012\\u4e0a\\u4f20 '+f.name):('\\u26a0 \\u672a\\u627e\\u5230\\u4e0a\\u4f20\\u6846 '+f.name));}catch(err){toast('\\u2715 \\u4e0a\\u4f20\\u5931\\u8d25: '+((err&&err.message)||err));}})();}catch(x){}},true);",
+        "document.addEventListener('dragover',function(e){try{var ts=(e.dataTransfer&&e.dataTransfer.types)||[];var has=false;for(var i=0;i<ts.length;i++){if(ts[i]==='application/x-dao-file'||ts[i]==='application/x-dao-conv')has=true;}if(has){e.preventDefault();try{e.dataTransfer.dropEffect='copy';}catch(x){}if(!window.__daoDovSeen){window.__daoDovSeen=1;bcn('dragover','types='+Array.prototype.join.call(ts,','));}}}catch(x){}},true);",
+        "document.addEventListener('drop',function(e){try{var dtt=e.dataTransfer;if(!dtt)return;var tps=[];try{tps=Array.prototype.slice.call(dtt.types||[]);}catch(x){}var fp='',cv='';try{fp=dtt.getData('application/x-dao-file');}catch(x){}try{cv=dtt.getData('application/x-dao-conv');}catch(x){}bcn('drop','types='+tps.join('|')+' fp='+(fp?fp.length:0)+' cv='+(cv?cv.length:0)+' files='+((dtt.files&&dtt.files.length)||0));if(!fp&&!cv)return;e.preventDefault();e.stopPropagation();var tgt=e.target||document.body;toast('\\u23f3 \\u6b63\\u5728\\u4e0a\\u4f20\\u2026');(async function(){try{var f;if(fp){var o=JSON.parse(fp);f=await fetchFile(ORIGIN+'/__dlfile?p='+encodeURIComponent(o.path||''),(o.name||'file'));}else{var c=JSON.parse(cv);f=await fetchFile(ORIGIN+'/__convmd?email='+encodeURIComponent(c.email||'')+'&sid='+encodeURIComponent(c.sid||''),((c.title||c.sid||'conversation')+'.md'));}bcn('fetched',f.name+' sz='+(f.size||0));var ok=feed(tgt,f);bcn('feed','ok='+ok+' tag='+((tgt&&tgt.tagName)||'')+' inputs='+document.querySelectorAll('input[type=file]').length);toast(ok?('\\u2705 \\u5df2\\u6295\\u9012\\u4e0a\\u4f20 '+f.name):('\\u26a0 \\u672a\\u627e\\u5230\\u4e0a\\u4f20\\u6846 '+f.name));}catch(err){bcn('err',(err&&err.message)||err);toast('\\u2715 \\u4e0a\\u4f20\\u5931\\u8d25: '+((err&&err.message)||err));}})();}catch(x){}},true);",
         "}catch(e){}})();"
     ].join("");
 }

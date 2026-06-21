@@ -34,6 +34,29 @@ const DEVIN_UA =
 //   复用 socket 后首屏与切页显著提速; maxSockets 适度并行, 空闲 15s 回收。
 const _httpsAgent = new https.Agent({ keepAlive: true, keepAliveMsecs: 15000, maxSockets: 64, maxFreeSockets: 16, timeout: 60000 });
 
+// 上游连接预热 (根治"首开/空闲后冷连接 ~2s 尖峰")。
+//   实测: 代理本身几乎不耗时(热请求 ~0.3s·近同直连), 但首次/空闲后的冷连接
+//   因 TLS 重握手飙到 ~1.4–2.0s。故常驻一条到 app.devin.ai 的热连接(并由此预热
+//   _httpsAgent 的 TLS 会话缓存 → 后续并发 socket 均可会话恢复·握手快) → 新开账号/
+//   进页的首请求直接复用 → 冷启从 ~2s 降到 ~0.3s。守柔: 全程 try/catch·不抛·仅
+//   在有活动反代时心跳·失败不影响任何代理逻辑。可用 WAM_PROXY_WARM=0 关闭。
+let _warmTimer = null;
+function _warmOnce() {
+  try {
+    const req = https.request(DEVIN_APP + "/", { method: "HEAD", agent: _httpsAgent, timeout: 8000, rejectUnauthorized: false, headers: { "User-Agent": DEVIN_UA, "Accept": "*/*" } }, (res) => { try { res.resume(); } catch (e) {} });
+    req.on("error", () => {});
+    req.on("timeout", () => { try { req.destroy(); } catch (e) {} });
+    req.end();
+  } catch (e) { /* 守柔 */ }
+}
+function _startWarm() {
+  if (_warmTimer || process.env.WAM_PROXY_WARM === "0") return;
+  _warmOnce();
+  _warmTimer = setInterval(() => { try { if (_servers.size > 0) _warmOnce(); else _stopWarm(); } catch (e) {} }, 10000);
+  try { if (_warmTimer.unref) _warmTimer.unref(); } catch (e) {}
+}
+function _stopWarm() { if (_warmTimer) { try { clearInterval(_warmTimer); } catch (e) {} _warmTimer = null; } }
+
 // email → { server, port, auth }. 每账号独立端口 → origin 隔离 → 多实例不串号。
 const _servers = new Map();
 
@@ -342,7 +365,7 @@ async function handleRequest(req, res, auth, opts, _log) {
   // 拖拽上传桥 (同源直服本反代端口 → 对齐 /i/ 同源页·根治 IDE 内拖拽无反应)。
   if (_bridgeServe) {
     const bp = reqUrl.pathname;
-    if (bp === "/__daobridge.js" || bp === "/__dlfile" || bp === "/__convmd") {
+    if (bp === "/__daobridge.js" || bp === "/__dlfile" || bp === "/__convmd" || bp === "/__dropdiag") {
       try {
         const out = await _bridgeServe(bp, reqUrl);
         if (out) {
@@ -646,6 +669,8 @@ async function ensureProxyForAccount(email, auth, log) {
     server.listen(port, "127.0.0.1", () => resolve());
   });
   _servers.set(key, entry);
+  // 新账号反代建成即预热上游连接 → SPA 起动前热 socket 已就绪·免 2s 冷启。
+  try { _startWarm(); } catch (e) { /* 守柔 */ }
   if (log) try { log("[proxy] " + key + " → http://localhost:" + port); } catch {}
   return { ok: true, port, url: "http://localhost:" + port + "/" };
 }
@@ -677,6 +702,7 @@ function stopProxy(email) {
 function stopAll() {
   for (const e of _servers.values()) if (e.server) try { e.server.close(); } catch {}
   _servers.clear();
+  _stopWarm();
 }
 
 module.exports = {
