@@ -54,6 +54,28 @@
       await navigator.serviceWorker.register("/uv/sw.js", { scope: "/uv/" });
       await navigator.serviceWorker.ready;
 
+      // 确保【本页】已被 SW 接管 (controller 就位) 再喂 iframe。.ready 只保证 scope 有 active
+      // worker, 不保证本 client 受控: 首屏 / 重载后本页常处于未受控态 → 此时 iframe 的
+      // /uv/service/ 请求会漏到网络 (404/错站) → 永远卡在「注册 Service Worker」。
+      // SW 的 activate 里有 clients.claim(), 故等一次 controllerchange; 仍未受控则一次性整页
+      // 重载 (sessionStorage 防循环), 重载后必受控。这是首屏偶发卡死的根因之一。
+      if (!navigator.serviceWorker.controller) {
+        await new Promise(function (resolve) {
+          var done = false;
+          function fin() { if (done) return; done = true; resolve(); }
+          navigator.serviceWorker.addEventListener("controllerchange", fin, { once: true });
+          setTimeout(fin, 3000);
+        });
+        if (!navigator.serviceWorker.controller) {
+          if (!sessionStorage.getItem("__uvReloaded")) {
+            sessionStorage.setItem("__uvReloaded", "1");
+            location.reload();
+            return;
+          }
+        }
+      }
+      try { sessionStorage.removeItem("__uvReloaded"); } catch (e) {}
+
       // 预热: 先经 SW 发一个轻量请求, 让 SW 内 BareClient 在【本页空闲且能应答 getPort】时
       //   完成与 SharedWorker 的端口协商并缓存。否则 SPA 启动瞬间并发 ~20 个 module 预载,
       //   首次端口协商会在 1s 内超时 → 这批 import 全 ERR_ABORTED。预热后整批复用已建端口。
