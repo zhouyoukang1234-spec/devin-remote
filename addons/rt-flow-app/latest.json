@@ -1,6 +1,6 @@
 {
-  "versionCode": 114,
-  "versionName": "0.37.10",
-  "url": "https://github.com/zhouyoukang1234-spec/devin-remote/releases/download/rtflow-v0.37.10/DevinCloud-mobile-v0.37.10.apk",
-  "notes": "v0.37.10 · 网页直开网控台与 APK 1:1 工具栏对齐 + 公网直开链接回落修复\n• 工具栏对齐：浏览器版 /console 外壳此前只有精简工具栏（菜单/地址/重载/前往），与 APK 原生顶栏不一致。现补齐与 APK buildChrome 完全 1:1 的第二行：🔍整页缩放滑块(50%–170%)+百分比、⭐收藏、↻重载、📥下载/书签、🗂全服通，并在地址栏旁加「译」整页翻译键。\n• 整页翻译：浏览器版「译」经手机 /api/http 调 Edge 免费翻译引擎(无 key·绕 CORS)，与 APK 同一套底层，可对同源板块/代理页一键整页翻译、再点恢复原文。\n• 缩放/收藏：缩放经 documentElement.zoom 作用于当前标签并持久化；收藏写入本地书签，📥面板可查看并一键打开。\n• 公网直开修复：当零账号中继 Worker 掉线/被 CF 限流(429)时，对外广播的「网页直开」链接不再固定指向打不开的 workers.dev/console，而是回落到当前生效的 cloudflared 隧道 /console（实测 200 可开）。"
+  "versionCode": 115,
+  "versionName": "0.37.11",
+  "url": "https://github.com/zhouyoukang1234-spec/devin-remote/releases/download/rtflow-v0.37.11/DevinCloud-mobile-v0.37.11.apk",
+  "notes": "v0.37.11 · 归一网页内真登 Devin + 额度刷新提速 + 重载即刷账号数据\n• 归一 /console 单网页内点账号 ⚡ → 同页内开出完整登录态的 Devin Cloud 官网标签(org/会话/12 repos/输入框)，非外部窗口；两行工具栏(缩放/收藏/重载/下载/全服通)对该 Devin 标签同样生效(缩放实测 125%)。\n• 额度刷新提速：在跑对话的号 近实时刷额度由 ~4s → ~2s 一轮，且不再被全量轮阻塞；对话追踪轮询 12s → 9s，更快识别在跑对话的号进入快车道。\n• 重载键(↻)增强：刷新页面的同时静默刷新所有同源板块账号的 全量额度 + 对话追踪 等各项数据，不仅仅刷页面。"
 }

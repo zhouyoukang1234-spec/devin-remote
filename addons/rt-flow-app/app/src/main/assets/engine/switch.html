@@ -898,6 +898,8 @@ async function pollTrk(){
 }
 function devinTag(a){ try{ var t=JSON.parse(localStorage.getItem("rtflow.tags")||"{}"); return t[(a.email||"").toLowerCase()]||""; }catch(e){ return ""; } }
 function refreshTrack(){ toast("刷新对话追踪…"); pollTrk(); }
+// 外壳「重载」键调用: 刷新页面同时静默刷新该号各项数据(全量额度 + 对话追踪), 不仅仅额度。
+window.__rtReloadRefresh=function(){ try{ _quotaWarmed=false; autoQuotaTick(); }catch(e){} try{ pollTrk(); }catch(e){} };
 
 // ── 行多选 / 批量 (以账号 id 为准, 跨 8s 自动重渲染持久 → 修复"打钩后状态自动丢失") ──
 function onChk(cb){
@@ -1219,7 +1221,7 @@ async function autoQuotaTick(){
 //   只刷"有在跑对话"的号(数量少) → ~4s 一轮, 远快于 12s 全量轮, 对话过程中额度近实时可见。
 //   隐藏/后台即停; 与全量额度轮(autoQuotaTick)互斥, 不叠加轰网络、不抢主线程。
 async function autoQuotaLiveTick(){
-  if(_notVisible() || _quotaBusy || _quotaLiveBusy) return;
+  if(_notVisible() || _quotaLiveBusy) return;   // 对话使用中的号优先近实时刷额度, 不被全量轮(_quotaBusy)阻塞
   var live=loadAcc().filter(hasAuth).filter(_hasLiveConv);
   if(!live.length) return;     // 无在跑对话 → 让全量轮负责, 本快轮不空转
   _quotaLiveBusy=true;
@@ -1347,12 +1349,12 @@ window.addEventListener("resize", function(){ if(!_notVisible() && _renderDirty)
 setInterval(render, 6000);
 // 自调度 + 抖动: 让 pollTrk / autoQuota / autoBackup 三个心跳错峰, 不在同一刻一起轰网络 (消除并发卡顿)。
 function _loop(fn, base, jitter){ (function tick(){ setTimeout(function(){ try{ fn(); }catch(e){} tick(); }, base + Math.floor(Math.random()*jitter)); })(); }
-setInterval(pollTrk, 12000);   // 30s→15s→12s: 跨设备同账号运行更接近实时 (主心跳保持稳定周期)
+setInterval(pollTrk, 9000);   // 30s→15s→12s→9s: 更快识别在跑对话的号(驱动 _hasLiveConv) → 更快进额度快车道
 // 美刀额度: 冷启动尽快全量刷一遍(消除死数据); 之后每 ~12s 一轮, 错开 pollTrk 半个周期 + 抖动, 避免与状态轮询同刻并发
-setTimeout(autoQuotaTick, 1200);
-setTimeout(function(){ _loop(autoQuotaTick, 11000, 3000); }, 6000);   // 6s 相位偏移 → 与 12s 的 pollTrk 错峰
-// 对话使用中 → 金额近实时: 只刷在跑对话的号, ~4s 一轮(带抖动); 无在跑对话时自动空转不耗网络
-setTimeout(function(){ _loop(autoQuotaLiveTick, 3500, 1200); }, 2500);
+setTimeout(autoQuotaTick, 600);
+setTimeout(function(){ _loop(autoQuotaTick, 11000, 3000); }, 6000);   // 6s 相位偏移 → 与 pollTrk 错峰
+// 对话使用中 → 金额近实时: 只刷在跑对话的号, ~2s 一轮(带抖动); 无在跑对话时自动空转不耗网络
+setTimeout(function(){ _loop(autoQuotaLiveTick, 1800, 700); }, 1200);
 // 自动备份心跳: 始终增量备份(每 ~90s 轮一个账号, 带抖动), 与额度/清理解耦; 且仅在交互空闲时启动
 setTimeout(autoBackupTick, 9000);
 _loop(autoBackupTick, 85000, 12000);

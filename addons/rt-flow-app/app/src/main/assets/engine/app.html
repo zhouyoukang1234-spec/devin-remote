@@ -328,7 +328,13 @@
   }
   document.getElementById("go").onclick=goAddr;
   addr.addEventListener("keydown",function(e){ if(e.key==="Enter") goAddr(); });
-  document.getElementById("reload").onclick=function(){ var t=tabs[active]; if(t){ try{ t.fr.contentWindow.location.reload(); }catch(e){ t.fr.src=t.fr.src; } } };
+  document.getElementById("reload").onclick=function(){
+    // ① 刷新当前标签页面 (原行为)
+    var t=tabs[active]; if(t){ try{ t.fr.contentWindow.location.reload(); }catch(e){ t.fr.src=t.fr.src; } }
+    // ② 同时刷新所有同源板块的账号 各项数据(全量额度 + 对话追踪), 不仅仅页面 (用户诉求: 刷新键也刷账号各项数据)。
+    //    跨域 Devin 标签(根挂载独立端口)访问 contentWindow 会抛异常 → 忽略, 不影响。
+    try{ tabs.forEach(function(x){ try{ var w=x&&x.fr&&x.fr.contentWindow; if(w&&typeof w.__rtReloadRefresh==="function") w.__rtReloadRefresh(); }catch(e){} }); }catch(e){}
+  };
 
   // ── 新标签面板 ──
   var launch=document.getElementById("launch"), segGrid=document.getElementById("segGrid");
