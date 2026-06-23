@@ -7769,12 +7769,22 @@ async function devinSetMessageLimit(orgId: string, maxCredits: number, auth1: st
     return { ok: r.status === 200 || r.status === 201 || r.status === 204, status: r.status };
 }
 
-// 读本号剩余可用 ACU (billing/usage/stats.available_acus) — 供「单会话上限 = 剩余 − N」动态反注
+// 读本号剩余额度 (billing/usage/stats) — 供「单会话上限 = 剩余 − N」动态反注。
+//   订阅号剩余在 available_acus; Pro/试用结束的按需号 available_acus=0、真实剩余在 balance(按需余额)。
+//   故取两者较大者为「剩余」: 否则按需号会被钉到 cap=1 (即 $69 余额却上限 $1 的错配)。守柔: 任一字段缺失按 0 计, 二者皆缺返回 null(跳过管理)。
 async function devinFetchAvailableAcus(orgId: string, auth1: string): Promise<number | null> {
     const bareOrgId = orgId.replace(/^org-/, '');
     try {
         const r = await devinJsonGet(DEVIN_APP + '/api/org-' + bareOrgId + '/billing/usage/stats', { Authorization: 'Bearer ' + auth1, 'x-cog-org-id': orgId });
-        if (r.status === 200 && r.json && typeof r.json.available_acus === 'number') return r.json.available_acus;
+        if (r.status === 200 && r.json) {
+            const hasAcu = typeof r.json.available_acus === 'number';
+            const hasBal = typeof r.json.balance === 'number';
+            if (hasAcu || hasBal) {
+                const acu = hasAcu ? r.json.available_acus : 0;
+                const bal = hasBal ? r.json.balance : 0;
+                return Math.max(acu, bal, 0);
+            }
+        }
     } catch { /* 守柔 */ }
     return null;
 }
