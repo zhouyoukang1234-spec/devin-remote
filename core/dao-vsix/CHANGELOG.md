@@ -2,6 +2,13 @@
 
 道法自然 · 无为而无不为。仅记录与「内网穿透 / dao-bridge / 知识库反向注入」相关的关键变更。
 
+## 3.50.27
+- **根治「重载 leader 即断隧道 / 公网 URL 反复变」——隧道脱离窗口、独立常驻 + 重载自动采纳**。根因(本会话 live 坐实):`bridgeStartTunnel` 以 `spawn(..., { detached:false })` 把 cloudflared 起为**扩展宿主的子进程**,且每次启动**无条件重起**一条快速隧道;故重载/退出 leader 窗口 → cloudflared 随宿主死 → 公网 URL 必换,且**自愈环的发布端(探活+反注)与隧道同住一窗口、一并断掉**(实测:隧道死后 >6min 知识条目从未自动改写新 URL)。
+  - 改为 `detached:true + unref()`、stdio 重定向到 `~/.dao/bridge/cloudflared.log`,使 cloudflared 成为**独立 OS 进程**,窗口退出/重载不再杀它;隧道 `{pid,url,mode}` 落盘 `~/.dao/bridge/tunnel.json`。
+  - 新增 `bridgeAdoptLiveTunnel()`:任何窗口启动/自持久化时,`bridgeStartTunnel(false)` **先采纳**「pid 仍活 + URL 探通」的现存隧道,命中即直接接管 **URL 不变**、不另起 cloudflared;未命中才清理陈旧 pid 并新起。
+  - `bridgeStopTunnel(killDetached=true)`:显式重启/重置/登出仍按 pid 终结独立隧道;`deactivate()`(窗口关闭)不调用它 → 隧道存活跨窗口。隧道与窗口生命周期就此解耦。
+  - 构建护栏 `daoDropBridgeJs` 解析通过、rt-flow 119 PASS。**(注:动到最脆弱的隧道生命周期,需 live 验证「杀窗口→隧道存活+URL 不变」后再部署。)**
+
 ## 3.50.26
 - **闭合「内穿自愈环」的消费端(云端 Agent 不再依赖用户重发 URL)**。根因:发布端早已闭环(`bridgeLivenessTick` 每 30s 探活,死则刷新隧道并经 `reinjectBridgeToAllAccounts` 把新 URL 反向注入回知识条目「DAO Bridge 内网穿透文档」);唯一缺口是**消费端**——云端 Agent 旧 URL 打不通时去问用户,而不是**重读这条会被自动改写的知识条目**。
   - `bridgeGenerateCloudMd()` 新增「⚡ 云端 Agent · 断线零人工自愈」配方段(随每次反向注入持久写入知识条目):健康探测 5xx/超时/DNS 失败 = 隧道已轮换 → 不问用户,重读本知识条目(插件 ≤30s 自动改写为新 URL)→ 仍旧则每 30s 重读、最多约 5 分钟接管。整条「自动识别→自动刷新→自动反注入本库→云端重读本库」链路闭合,零人工。

@@ -2557,6 +2557,35 @@ let bridgeToken: string = '';
 
 function bridgeEnsureDir() { fs.mkdirSync(BRIDGE_DIR, { recursive: true }); }
 
+// ── 独立常驻隧道(脱离窗口) ──────────────────────────────────────────────
+// 帛书·「死而不亡者寿」: cloudflared 隧道进程过去作为扩展宿主的子进程(detached:false),
+//   重载/退出 leader 窗口即随之而死 → 公网 URL 必换、自愈环的发布端也一并断掉。
+//   故改为独立 OS 进程(detached+unref+日志重定向), 并把 {pid,url} 落盘; 任何窗口启动时先
+//   「采纳」仍存活且探通的隧道, 不再盲目重起 → 重载窗口 URL 不变, 隧道与窗口生命周期解耦。
+const BRIDGE_TUNNEL_FILE = path.join(BRIDGE_DIR, 'tunnel.json');
+const BRIDGE_TUNNEL_LOG = path.join(BRIDGE_DIR, 'cloudflared.log');
+function bridgePidAlive(pid: number): boolean {
+    if (!pid || pid <= 0) return false;
+    try { process.kill(pid, 0); return true; } catch (e: any) { return !!(e && e.code === 'EPERM'); }
+}
+function bridgeReadTunnelFile(): { pid: number; url: string; mode: string; startedAt?: string } | null {
+    try { const j = JSON.parse(fs.readFileSync(BRIDGE_TUNNEL_FILE, 'utf8')); if (j && j.pid && j.url) return j; } catch { /* 守柔 */ }
+    return null;
+}
+function bridgeWriteTunnelFile(pid: number, url: string, mode: string): void {
+    try { fs.writeFileSync(BRIDGE_TUNNEL_FILE, JSON.stringify({ pid, url, mode, host: os.hostname(), startedAt: new Date().toISOString() }, null, 2), 'utf8'); } catch { /* 守柔 */ }
+}
+// 采纳已存活的独立隧道进程(窗口重载场景): pid 活 + URL 探通 → 直接接管, 不另起 cloudflared。
+async function bridgeAdoptLiveTunnel(): Promise<boolean> {
+    const t = bridgeReadTunnelFile();
+    if (!t || !t.url) return false;
+    if (!bridgePidAlive(t.pid)) return false;
+    try { const ok = await bridgeProbeAlive(t.url, 6000, bridgeToken || ws.token); if (!ok) return false; } catch { return false; }
+    bridgeUrl = t.url;
+    try { bridgeSaveConnJson(); bridgeWriteArtifacts(); refreshDaoCloudMiddlePanel(); } catch { /* 守柔 */ }
+    return true;
+}
+
 function bridgeSaveNamedToken(token: string) {
     bridgeEnsureDir();
     fs.writeFileSync(path.join(BRIDGE_DIR, 'tunnel-token'), token, 'utf8');
@@ -2712,7 +2741,12 @@ function bridgeFindCloudflared(): string {
 async function bridgeStartTunnel(named: boolean) {
     const { spawn } = require('child_process');
     bridgeEnsureDir();
+    // 守柔·不重起: 启动前先采纳仍存活且探通的独立隧道(窗口重载/多窗口场景) → URL 不变。
+    //   命名隧道不参与采纳(其入口由命名配置决定, 不读快速隧道域)。
+    if (!named) { try { if (await bridgeAdoptLiveTunnel()) { console.log('[dao] 采纳已存活独立隧道 → ' + bridgeUrl + ' (不重起)'); return; } } catch { /* 守柔 */ } }
+    // 句柄在手则先停; 同时清理盘上记录的陈旧隧道进程(可能是上个窗口遗留、URL 已死)。
     if (bridgeProc) { try { bridgeProc.kill(); } catch {} bridgeProc = null; }
+    try { const stale = bridgeReadTunnelFile(); if (stale && stale.pid && bridgePidAlive(stale.pid)) { try { process.kill(stale.pid); } catch { /* 守柔 */ } } } catch { /* 守柔 */ }
     if (!bridgeToken) bridgeToken = crypto.randomBytes(24).toString('hex');
     const cfPath = bridgeFindCloudflared();
     const targetPort = ws.port || 9920;
@@ -2724,31 +2758,50 @@ async function bridgeStartTunnel(named: boolean) {
     } else {
         args = ['tunnel', '--url', localUrl, '--no-autoupdate'];
     }
-    bridgeProc = spawn(cfPath, args, { stdio: ['ignore', 'pipe', 'pipe'], detached: false });
+    // 独立 OS 进程: detached+unref 使 cloudflared 脱离扩展宿主的进程组, 窗口退出/重载不再杀它;
+    //   stdio 重定向到日志文件(非管道, 切断 IPC 纽带), 由轮询日志捕获隧道 URL。
+    let logFd: number | null = null;
+    try { logFd = fs.openSync(BRIDGE_TUNNEL_LOG, 'w'); } catch { logFd = null; }
+    const stdio: any = logFd != null ? ['ignore', logFd, logFd] : ['ignore', 'pipe', 'pipe'];
+    bridgeProc = spawn(cfPath, args, { stdio, detached: true, windowsHide: true });
+    try { bridgeProc.unref(); } catch { /* 守柔 */ }
+    const childPid = bridgeProc.pid;
+    try { if (logFd != null) fs.closeSync(logFd); } catch { /* 守柔 */ }
     let urlCaptured = false;
-    const handleOutput = (data: Buffer) => {
-        const line = data.toString();
-        if (!urlCaptured) {
-            // 帛书·「不自见故明」: cloudflared 横幅会打印 api.trycloudflare.com(注册端点, 非隧道),
-            // 旧正则误抓为公网地址 → conn.json 存了占位 URL。此处排除 api. 子域, 只认真实隧道域名。
-            const m = line.match(/https:\/\/(?!api\.)[a-z0-9-]+\.trycloudflare\.com/);
-            if (m) {
-                bridgeUrl = m[0];
-                urlCaptured = true;
-                bridgeSaveConnJson();
-                bridgeWriteArtifacts();
-                refreshDaoCloudMiddlePanel();
-                vscode.window.showInformationMessage(`Bridge 已打通: ${bridgeUrl}`);
-            }
+    const tryCapture = (): boolean => {
+        if (urlCaptured) return true;
+        let txt = '';
+        try { txt = fs.readFileSync(BRIDGE_TUNNEL_LOG, 'utf8'); } catch { return false; }
+        // 帛书·「不自见故明」: 排除 api.trycloudflare.com(注册端点, 非隧道), 只认真实隧道域名。
+        const m = txt.match(/https:\/\/(?!api\.)[a-z0-9-]+\.trycloudflare\.com/);
+        if (m) {
+            bridgeUrl = m[0];
+            urlCaptured = true;
+            bridgeWriteTunnelFile(childPid, bridgeUrl, named ? 'named' : 'quick');
+            bridgeSaveConnJson();
+            bridgeWriteArtifacts();
+            refreshDaoCloudMiddlePanel();
+            vscode.window.showInformationMessage(`Bridge 已打通: ${bridgeUrl}`);
+            return true;
         }
+        return false;
     };
-    bridgeProc.stdout?.on('data', handleOutput);
-    bridgeProc.stderr?.on('data', handleOutput);
-    bridgeProc.on('exit', () => { bridgeProc = null; bridgeUrl = ''; bridgeSaveConnJson(); refreshDaoCloudMiddlePanel(); });
+    // 管道兜底(无法写日志文件时): 仍按行捕获。
+    if (logFd == null) {
+        const handleOutput = (data: Buffer) => { const line = data.toString(); try { fs.appendFileSync(BRIDGE_TUNNEL_LOG, line); } catch { /* 守柔 */ } tryCapture(); };
+        bridgeProc.stdout?.on('data', handleOutput);
+        bridgeProc.stderr?.on('data', handleOutput);
+    }
+    const capTimer = setInterval(() => { if (tryCapture()) { try { clearInterval(capTimer); } catch { /* 守柔 */ } } }, 1000);
+    setTimeout(() => { try { clearInterval(capTimer); } catch { /* 守柔 */ } }, 60000);
+    bridgeProc.on('exit', () => { bridgeProc = null; bridgeUrl = ''; try { bridgeSaveConnJson(); refreshDaoCloudMiddlePanel(); } catch { /* 守柔 */ } });
 }
 
-function bridgeStopTunnel() {
+// killDetached=true: 同时终结盘上记录的独立隧道进程(显式重启/重置/登出时用);
+//   默认 false → 仅释放本窗口句柄, 让独立隧道继续存活(窗口重载/停止按钮不连累隧道)。
+function bridgeStopTunnel(killDetached: boolean = true) {
     if (bridgeProc) { try { bridgeProc.kill(); } catch {} bridgeProc = null; }
+    if (killDetached) { try { const t = bridgeReadTunnelFile(); if (t && t.pid && bridgePidAlive(t.pid)) { try { process.kill(t.pid); } catch { /* 守柔 */ } } } catch { /* 守柔 */ } }
     bridgeUrl = '';
     bridgeSaveConnJson();
     refreshDaoCloudMiddlePanel();
