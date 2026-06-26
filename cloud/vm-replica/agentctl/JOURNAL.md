@@ -1438,6 +1438,43 @@ folds into `clickCount:3`.
 
 ---
 
+## F088 — drag a handle by a precise pixel delta (`drag_by`) · R52
+
+**Friction:** A splitter between two panes, a resize grip on a window corner, a
+bare slider thumb, a timeline scrubber — these set their value from *how far the
+pointer travelled while held*, read live off each `mousemove`'s `clientX/Y` minus
+where the press began. There is no destination *element* to aim at: the result is
+a width, a height, an offset, and the only thing that produces it is a known pixel
+displacement. `click` (F061) presses and releases in place — delta zero, the pane
+never budges — yet returns `True`. `drag_reorder` (F080) does press and step with
+`buttons:1`, but it lands on the *midpoint of a target element*, a layout-dependent
+spot you do not choose; ask it to drag the splitter "to #right" and the pane jumps
+to wherever `#right` happens to sit, not by the 60px you wanted.
+
+**Mechanism:** A drag-to-resize handler latches on `mousedown` (recording the start
+`clientX` and the current width), then on every `mousemove` recomputes
+`width = startWidth + (clientX − startX)` while the button is held, and unlatches on
+`mouseup`. The browser only runs that handler when the moves carry `buttons:1`, so
+the gesture must be a faithful press → held-moves → release at the *exact* endpoint.
+
+**Primitive:** `Browser.drag_by(selector, dx, dy)` resolves the honest hit point
+(F061 — refusing if every probe is occluded), presses `buttons:1` there, steps the
+cursor in ~10px increments along `(dx, dy)` so the live `mousemove` handler runs each
+frame, and releases at `(x0+dx, y0+dy)`. Returns `True` once the drag completes,
+`False` if the element is absent or occluded.
+
+**Live (R52):** the splitter starts at 200px; a plain `click` on the handle leaves it
+at 200px (delta zero) yet returns `True`; `drag_by(+60)` widens it to *exactly* 260px;
+`drag_by(-40)` narrows it to *exactly* 220px; under a transparent veil `drag_by` →
+`False` and nothing moves; an absent selector → `False`. `301/301 checks passed`,
+deterministic ×3.
+
+**Lesson (道法自然):** 圖難於其易，為大於其細 — the pane's final width is a large,
+layout-spanning outcome, but it is governed entirely by the small thing: the pixel
+delta carried while the button is down. Aim at no element; honour the displacement.
+
+---
+
 ## Frontier (next honest rounds)
 
 These are *not yet built* — they are the next real surfaces to push into. Each

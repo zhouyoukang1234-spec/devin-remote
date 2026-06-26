@@ -714,6 +714,47 @@ class Browser:
                        "button": "left", "buttons": 0, "clickCount": 1})
         return True
 
+    def drag_by(self, selector: str, dx: float, dy: float,
+                by_text: bool = False, tag: str | None = None,
+                steps: int | None = None) -> bool:
+        """Drag a handle by a precise pixel **delta** (F088). A splitter between two
+        panes, a resize grip on a window corner, a slider thumb on a bare track, a
+        timeline scrubber — these set their value from *how far the pointer moved
+        while held*, read live off each ``mousemove``'s ``clientX/Y`` minus where the
+        press started. There is no destination *element* to aim at: the result is a
+        width/height/offset, and the only thing that produces it is a known pixel
+        displacement. :meth:`click` presses and releases in place (delta zero — the
+        pane never moves) yet returns ``True``. :meth:`drag_reorder` (F080) does press
+        and step with ``buttons:1`` but lands on the *midpoint of a target element*,
+        a layout-dependent spot you do not choose — drag the splitter "to #right" and
+        it jumps to wherever #right happens to sit, not by the 60px you wanted. Here
+        we aim at the honest hit point (F061), refuse if occluded, press, step the
+        cursor in small increments along ``(dx, dy)`` carrying ``buttons:1`` so the
+        live ``mousemove`` handler runs every frame, and release at the exact
+        endpoint. Returns ``True`` once the drag completes, ``False`` if the element
+        is absent or occluded."""
+        p = self._hit_point_of(selector, by_text=by_text, tag=tag)
+        if not p:
+            return False
+        if p.get("occluded"):
+            return False
+        x0, y0 = p["x"], p["y"]
+        self._move(x0, y0)
+        self.cdp.call("Input.dispatchMouseEvent",
+                      {"type": "mousePressed", "x": x0, "y": y0,
+                       "button": "left", "buttons": 1, "clickCount": 1})
+        span = abs(dx) + abs(dy)
+        n = steps if steps else max(2, int(span / 10) + 1)
+        for i in range(1, n + 1):
+            self.cdp.call("Input.dispatchMouseEvent",
+                          {"type": "mouseMoved", "x": x0 + dx * i / n,
+                           "y": y0 + dy * i / n, "button": "left",
+                           "buttons": 1})
+        self.cdp.call("Input.dispatchMouseEvent",
+                      {"type": "mouseReleased", "x": x0 + dx, "y": y0 + dy,
+                       "button": "left", "buttons": 0, "clickCount": 1})
+        return True
+
     def zoom_at(self, selector: str, steps: int = 1, out: bool = False,
                 by_text: bool = False, tag: str | None = None) -> bool:
         """Pinch-zoom a pane with Ctrl+wheel (F084). A slippy map, an image or PDF

@@ -2277,6 +2277,56 @@ def round_triple_click(b: Browser, offline: bool) -> None:
         sp.shutdown()
 
 
+def round_drag_by(b: Browser, offline: bool) -> None:
+    print("R52: drag a splitter by a precise pixel delta (F088) — cdp")
+    page = (b"<!doctype html><meta charset=utf-8><title>resize</title>"
+            b"<style>html,body{margin:0}"
+            b"#wrap{display:flex;width:600px;height:160px}"
+            b"#left{background:#cdf;width:200px;height:160px}"
+            b"#split{width:12px;height:160px;background:#333;cursor:col-resize}"
+            b"#right{background:#fdc;flex:1}"
+            b"#veil{position:fixed;inset:0;background:rgba(0,0,0,0);display:none}"
+            b"</style>"
+            b"<div id=wrap><div id=left></div><div id=split></div>"
+            b"<div id=right></div></div><div id=veil></div>"
+            b"<script>"
+            b"var sp=document.getElementById('split'),lf=document.getElementById('left'),"
+            b"drag=false,sx=0,sw=0;"
+            b"sp.addEventListener('mousedown',function(e){drag=true;sx=e.clientX;"
+            b"sw=lf.offsetWidth;e.preventDefault();});"
+            b"window.addEventListener('mousemove',function(e){if(!drag)return;"
+            b"var w=sw+(e.clientX-sx);w=Math.max(50,Math.min(450,w));lf.style.width=w+'px';});"
+            b"window.addEventListener('mouseup',function(){drag=false;});"
+            b"</script>")
+    sp = _serve(8981, page)
+
+    def width() -> int:
+        return b.eval("document.getElementById('left').offsetWidth")
+    try:
+        b.navigate("http://127.0.0.1:8981/")
+        time.sleep(0.2)
+        check("splitter starts at 200px", width() == 200, repr(width()))
+        # Friction: a plain click presses and releases in place (zero delta) — the
+        # mousemove handler never runs, so the pane never resizes, yet click lies True.
+        check("click on the handle does not resize (delta zero) but returns True",
+              b.click("#split") is True and width() == 200, repr(width()))
+        # Primitive: drag the handle right by exactly +60px, then left by -40px.
+        check("drag_by(+60) widens the pane to exactly 260px",
+              b.drag_by("#split", 60, 0) is True and width() == 260, repr(width()))
+        check("drag_by(-40) narrows the pane to exactly 220px",
+              b.drag_by("#split", -40, 0) is True and width() == 220, repr(width()))
+        # Honest refusals.
+        b.eval("document.getElementById('veil').style.display='block'")
+        check("drag_by refuses through an overlay",
+              b.drag_by("#split", 30, 0) is False)
+        check("nothing moved while occluded", width() == 220, repr(width()))
+        b.eval("document.getElementById('veil').style.display='none'")
+        check("drag_by on an absent element returns False",
+              b.drag_by("#nope", 30, 0) is False)
+    finally:
+        sp.shutdown()
+
+
 def main() -> int:
     offline = "--offline" in sys.argv
     b = Browser()
@@ -2296,7 +2346,7 @@ def main() -> int:
               round_nested_submenu, round_drag_reorder,
               round_scroll_into_view, round_double_click,
               round_press_hold, round_zoom_pane, round_key_activate,
-              round_key_step, round_triple_click]
+              round_key_step, round_triple_click, round_drag_by]
     for r in rounds:
         try:
             r(b, offline)
