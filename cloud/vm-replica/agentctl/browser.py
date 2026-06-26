@@ -1288,6 +1288,33 @@ class Browser:
         ) % (selector, json.dumps(crit))
         return bool(self.eval(js))
 
+    def form_errors(self, form_selector: str) -> list | None:
+        """Read why a form silently refuses to submit (F089). When a control fails
+        HTML5 constraint validation (``required`` empty, ``type=email`` malformed,
+        ``min``/``pattern`` violated), the browser **blocks the submit and paints a
+        native bubble** ("Please fill out this field.") that is *not in the DOM* —
+        no ``.error`` node, no ``[role=alert]`` — so :meth:`click` on the submit
+        button returns ``True`` (the click landed) yet nothing happens and there is
+        no element to :meth:`get_text`. The only honest record of the reason lives
+        on each control as ``el.validity`` / ``el.validationMessage``. We walk the
+        form's ``elements`` (skipping controls that don't participate in validation,
+        ``willValidate===false``) and return one entry per *invalid* control —
+        ``{"name", "type", "message"}`` (``name`` falls back to ``id``) — in document
+        order, so the first entry is the field the bubble is pinned to. An empty
+        list means the form *would* submit; ``None`` means the form is absent (or the
+        selector is not a form). This turns an invisible "click did nothing" into a
+        precise, actionable list of fields to fix."""
+        js = (
+            "(function(){var f=window.__agentctl.deepQuery(%r);"
+            "if(!f||typeof f.elements==='undefined'||typeof f.checkValidity!=='function')"
+            "return null;var out=[];"
+            "for(var i=0;i<f.elements.length;i++){var el=f.elements[i];"
+            "if(el.willValidate&&!el.validity.valid){"
+            "out.push({name:el.name||el.id||'',type:el.type||el.tagName.toLowerCase(),"
+            "message:el.validationMessage});}}return out;})()"
+        ) % form_selector
+        return self.eval(js)
+
     def set_editable(self, selector: str, text: str) -> bool:
         """Replace the text of a ``contenteditable`` editor (F063). Rich editors
         (a comment body, a Slack/Gmail compose area) are ``<div contenteditable>``

@@ -1476,6 +1476,49 @@ delta.
 
 ---
 
+## F089 — read why a form silently refuses to submit (`form_errors`) · R53
+
+**Friction:** You fill a form, `click` the submit button — the click lands, the
+primitive returns `True` — and *nothing happens*. The page stays put, no request
+fires, and there is no error node anywhere to `get_text`. The form was rejected by
+HTML5 constraint validation (a `required` field left empty, a malformed
+`type=email`, a number below `min`), but the browser reports that rejection as a
+**native bubble painted over the control** — not a DOM element. So every reading
+primitive we have comes up empty: `get_text` finds no message, a `.error` /
+`[role=alert]` query returns zero nodes, and `click` cannot tell a click that
+*did nothing* from one that worked. The reason is real but lives off-DOM.
+
+**Mechanism:** A submit runs the form's constraint check first; if any control's
+`validity.valid` is `false`, the submit is cancelled before any `submit` event and
+the browser shows the bubble for the first invalid control. The reason is readable
+— just not as markup: each control carries `el.validity` (the failed constraint)
+and `el.validationMessage` (the localized human string the bubble shows), and
+`el.willValidate` says whether the control participates at all. The
+form's `elements` collection holds them in document order, so the first invalid one
+is exactly the field the bubble is pinned to.
+
+**Primitive:** `Browser.form_errors(form_selector)` resolves the form (through
+`deepQuery`, so a form inside shadow DOM still works), walks `form.elements`,
+skips controls with `willValidate===false`, and returns one entry —
+`{"name", "type", "message"}` (`name` falling back to `id`) — per *invalid*
+control, in document order. An empty list `[]` means the form would submit; `None`
+means the selector is absent or not a form. The invisible "click did nothing"
+becomes a precise list of fields to fix.
+
+**Live (R53):** a form with `required` email + `min=18` number; `click` on submit
+returns `True` yet `#out` stays `idle`; `querySelectorAll('.error,[role=alert]')`
+is 0; `form_errors` returns both controls in order `[email, age]`, each carrying a
+non-empty native `validationMessage`; after `set_value` fills valid values the list
+empties to `[]` and the *same* click now reaches `SUBMITTED`; an absent form →
+`None`. `308/308 checks passed`, deterministic ×3.
+
+**Lesson (道法自然):** 知人者智，自知者明 — a primitive that only acts is half-blind;
+to act well a form must first *know why it was refused*. 信言不美 — the click that
+returns `True` and changes nothing is the unbeautiful truth; honesty is reading the
+reason the browser kept off the page and naming the field that holds it.
+
+---
+
 ## Frontier (next honest rounds)
 
 These are *not yet built* — they are the next real surfaces to push into. Each

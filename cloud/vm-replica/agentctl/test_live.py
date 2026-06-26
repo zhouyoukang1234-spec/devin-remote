@@ -2328,6 +2328,50 @@ def round_drag_by(b: Browser, offline: bool) -> None:
         sp.shutdown()
 
 
+def round_form_errors(b: Browser, offline: bool) -> None:
+    print("R53: read why a form silently refuses to submit (F089) — cdp")
+    page = (b"<!doctype html><meta charset=utf-8><title>validity</title>"
+            b"<form id=f>"
+            b"<input id=email name=email type=email required>"
+            b"<input id=age name=age type=number min=18 required>"
+            b"<button id=go type=submit>go</button></form>"
+            b"<div id=out>idle</div>"
+            b"<script>document.getElementById('f').addEventListener('submit',function(e){"
+            b"e.preventDefault();document.getElementById('out').textContent='SUBMITTED';});"
+            b"</script>")
+    sp = _serve(8983, page)
+    try:
+        b.navigate("http://127.0.0.1:8983/")
+        time.sleep(0.2)
+        # The click lands and "succeeds", but constraint validation blocks the
+        # submit — and the reason is a native bubble, absent from the DOM.
+        check("click on submit returns True yet the form never submits",
+              b.click("#go") is True and b.get_text("#out") == "idle",
+              repr(b.get_text("#out")))
+        check("no DOM node carries the failure reason",
+              b.eval("document.querySelectorAll('.error,[role=alert]').length") == 0)
+        errs = b.form_errors("#f")
+        check("form_errors lists both invalid controls in order",
+              isinstance(errs, list) and [e["name"] for e in errs] == ["email", "age"],
+              repr(errs))
+        check("form_errors carries the native validationMessage",
+              bool(errs) and all(e["message"] for e in errs),
+              repr([e["message"] for e in errs] if errs else None))
+        # Fill valid values; the bubble's cause is gone, so the list empties.
+        b.set_value("#email", "user@example.com")
+        b.set_value("#age", "21")
+        check("form_errors empties once every control is valid",
+              b.form_errors("#f") == [], repr(b.form_errors("#f")))
+        # …and now the same click actually submits.
+        check("submit goes through once the form validates",
+              b.click("#go") is True and b.get_text("#out") == "SUBMITTED",
+              repr(b.get_text("#out")))
+        check("form_errors on an absent form returns None",
+              b.form_errors("#nope") is None)
+    finally:
+        sp.shutdown()
+
+
 def main() -> int:
     offline = "--offline" in sys.argv
     b = Browser()
@@ -2347,7 +2391,8 @@ def main() -> int:
               round_nested_submenu, round_drag_reorder,
               round_scroll_into_view, round_double_click,
               round_press_hold, round_zoom_pane, round_key_activate,
-              round_key_step, round_triple_click, round_drag_by]
+              round_key_step, round_triple_click, round_drag_by,
+              round_form_errors]
     for r in rounds:
         try:
             r(b, offline)
