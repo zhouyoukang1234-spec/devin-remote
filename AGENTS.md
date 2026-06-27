@@ -190,6 +190,18 @@ module CORS 约束无解。故桌面端「公网渲染只传核心」的**正解
    生死），另起 `windsurf.cmd --user-data-dir <独立目录> --disable-workspace-trust --new-window <ws>`
    加载新版（共享 `~/.dao` 账号态），切勿 reload 用户正在用的窗口。注：用户常驻实例已信任工作区，磁盘
    修好后其下次正常重启会自动干净加载，无需任何额外参数。
+10. **headless Linux VM 原生登录两道坎（非插件缺陷·纯环境差异）。** 云 VM/无 GUI keyring 上做原生
+    OAuth 登录：① `devin://` 协议未注册 → deep-link 回调进不来，改走官方 **"Provide Auth Token"**
+    手动令牌（令牌 60s 一次性·现取现贴；IDE 点该按钮会另开浏览器并抢焦点，Ctrl+V 会落到 Chrome，
+    须切回 IDE 窗口再粘）；② 无 OS keyring 弹 `An OS keyring couldn't be identified` → 选
+    **"Use weaker encryption"** 完成持久化。成功判据：状态栏 `Devin: Login` → `Free - Upgrade Now`。
+    普通用户标准桌面不会遇到。完整 Linux 冷启动链路见 `docs/coldstart-linux-vm-lifecycle.md`。
+11. **"connection to server is erroring" 多为启动期瞬态，别误判持久故障。** 真因＝ proxy-pro 启动期
+    `restart-ls` 杀旧 LS 让其带新 `api_server_url` 重生的那几秒 ECONNREFUSED；数秒内 LS 重生重连即愈。
+    自修复为**三层闭环**：① `spawn-hook` 启动期拦 LS 进程参数强制收敛到健康反代；② `restart-ls`
+    锚点变更即收敛；③ 60s `watchdog` 兜底（反代死/旧即同端口重起重锚）。排错口诀：看 windsurf.log 该错
+    时间戳是否=启动瞬间；先 `curl 127.0.0.1:<port>/origin/health` 看反代 alive，再 `ss -tnp | grep
+    :<port>` 看 LS 是否已重连。锚点自测 curl 速查见 `docs/coldstart-linux-vm-lifecycle.md` §5。
 
 ---
 
