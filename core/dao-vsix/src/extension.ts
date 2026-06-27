@@ -1052,7 +1052,8 @@ async function startServer(context: vscode.ExtensionContext) {
         // CORS
         res.setHeader('Access-Control-Allow-Origin', '*');
         res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-        res.setHeader('Access-Control-Allow-Headers', 'Authorization, Content-Type');
+        res.setHeader('Access-Control-Allow-Headers', 'Authorization, Content-Type, Accept, Mcp-Session-Id, Mcp-Protocol-Version, Last-Event-ID');
+        res.setHeader('Access-Control-Expose-Headers', 'Mcp-Session-Id, Mcp-Protocol-Version');
         if (req.method === 'OPTIONS') { res.writeHead(204); res.end(); return; }
 
         const url = new URL(req.url || '/', `http://localhost:${ws.port}`);
@@ -1865,6 +1866,9 @@ function isAppProxyPassthrough(route: string): boolean {
     // 归一 · 独立 HTTP 外壳: /shell 与 /api/shell/* 为 dao 自有 (直出外壳/SSE/消息), 不透传官网
     if (route === '/shell' || route.startsWith('/shell/') || route.startsWith('/api/shell')) return false;
     if (route === '/i' || route.startsWith('/i/')) return false; // 归一 · 同源前缀账号反代 (dao 自有·非官网透传)
+    // 归一 · 四大模块综合 MCP 端点: /mcp 为 dao 自有 JSON-RPC 服务, 绝不透传官网
+    //   (否则被 SPA 同源反代/认证注入吞掉 → 调用方只见「登录 Devin」HTML 而非 MCP 协议)。
+    if (route === '/mcp' || route === '/mcp/' || route.startsWith('/mcp/')) return false;
     if (route.startsWith('/devin-cloud')) return false; // 已有专门前缀分支
     if (route.startsWith('/assets/')) return true;
     if (route.startsWith('/api/')) {
@@ -2159,7 +2163,291 @@ function getMirrorPageHtml(): string {
     ].join('\n');
 }
 
+// ═══════════════════════════════════════════════════════════
+// 道 · 四大模块综合归一 MCP — 帛书「道生一·一生二·二生三·三生万物」
+//   一个公网 MCP 端点统摄 pc_* / browser_* / plugin_* / vscode_*。
+//   不另起服务: 蹭常驻桥(DAO Bridge)的耐用隧道 <桥URL>/mcp; 工具实现全部委托
+//   插件已实测的内部处理器(/api/* 与 pcGui* / Chrome CDP), 不重复造轮 (大巧若拙)。
+// ═══════════════════════════════════════════════════════════
+const DAO_CDP_PORT = 9333; // browser_* 专用隔离 Chrome 的远程调试端口 (独立 user-data-dir·并行而不相悖)
+
+function daoMcpSleep(ms: number): Promise<void> { return new Promise(r => setTimeout(r, ms)); }
+
+// 以「假 req(_relayBody 钉入鉴权与 body)」复用既有路由处理器, 杜绝逻辑重写。
+async function daoMcpInvoke(apiRoute: string, body?: any, query?: Record<string, any>): Promise<any> {
+    const u = new URL(apiRoute, `http://localhost:${ws.port || DEFAULT_PORT}`);
+    if (query) { for (const k of Object.keys(query)) { const v = query[k]; if (v !== undefined && v !== null) u.searchParams.set(k, String(v)); } }
+    const fakeReq: any = {
+        method: 'POST',
+        headers: { authorization: 'Bearer ' + ws.token },
+        _relayBody: (body !== undefined && body !== null) ? JSON.stringify(body) : '{}',
+        socket: { remoteAddress: '127.0.0.1' },
+        url: u.pathname + (u.search || ''),
+        on: () => { /* _relayBody 已就位, 流事件无需 */ },
+    };
+    return await handleRouteInternal(u.pathname, u, fakeReq, ws.token, undefined);
+}
+
+function daoMcpText(v: any): any { return { content: [{ type: 'text', text: typeof v === 'string' ? v : JSON.stringify(v, null, 2) }] }; }
+function daoMcpImage(b64: string, mime: string): any { return { content: [{ type: 'image', data: b64, mimeType: mime || 'image/jpeg' }] }; }
+function daoMcpErr(msg: string): any { return { content: [{ type: 'text', text: 'ERROR: ' + msg }], isError: true }; }
+function daoClamp(v: any, lo: number, hi: number, dflt: number): number { const n = parseInt(String(v), 10); if (!isFinite(n)) return dflt; return Math.max(lo, Math.min(hi, n)); }
+
+// ── browser_* · Chrome DevTools Protocol (CDP) ──
+function daoCdpHttpGet(p: string): Promise<any> {
+    return new Promise((resolve, reject) => {
+        const req = http.get({ host: '127.0.0.1', port: DAO_CDP_PORT, path: p, timeout: 5000 }, (res: any) => {
+            let buf = ''; res.setEncoding('utf8');
+            res.on('data', (d: string) => buf += d);
+            res.on('end', () => { try { resolve(buf ? JSON.parse(buf) : null); } catch (e) { reject(new Error('cdp-http-parse: ' + buf.slice(0, 120))); } });
+        });
+        req.on('error', reject);
+        req.on('timeout', () => { try { req.destroy(); } catch { /* 守柔 */ } reject(new Error('cdp-http-timeout')); });
+    });
+}
+
+// 在单个 CDP target(或 browser endpoint) 上顺序执行若干命令, 返回最后一条结果。
+function daoCdpBatch(wsUrl: string, calls: { method: string; params?: any }[], timeoutMs = 20000): Promise<any> {
+    return new Promise((resolve, reject) => {
+        let WebSocket: any;
+        try { WebSocket = require('ws'); } catch (e) { reject(new Error('ws-module-unavailable')); return; }
+        let sock: any;
+        try { sock = new WebSocket(wsUrl, { perMessageDeflate: false, maxPayload: 256 * 1024 * 1024 }); } catch (e: any) { reject(new Error('cdp-ws-open: ' + (e && e.message))); return; }
+        let idc = 0; let done = false; const results: any[] = []; const queue = calls.slice(); let cur: { method: string; params?: any } | null = null; let curId = 0;
+        const finish = (err: any, val?: any) => { if (done) return; done = true; clearTimeout(timer); try { sock.close(); } catch { /* 守柔 */ } if (err) reject(err); else resolve(val); };
+        const timer = setTimeout(() => finish(new Error('cdp-timeout')), timeoutMs);
+        const sendNext = () => {
+            if (queue.length === 0) { finish(null, results[results.length - 1]); return; }
+            cur = queue.shift() || null; curId = ++idc;
+            try { sock.send(JSON.stringify({ id: curId, method: cur!.method, params: cur!.params || {} })); } catch (e: any) { finish(new Error('cdp-send: ' + (e && e.message))); }
+        };
+        sock.on('open', () => sendNext());
+        sock.on('message', (data: any) => {
+            let msg: any; try { msg = JSON.parse(data.toString()); } catch { return; }
+            if (msg.id !== curId) return; // 跳过事件与乱序
+            if (msg.error) { finish(new Error('cdp-error: ' + JSON.stringify(msg.error))); return; }
+            results.push(msg.result); sendNext();
+        });
+        sock.on('error', (e: any) => finish(new Error('cdp-ws: ' + (e && e.message))));
+        sock.on('close', () => { if (!done) finish(new Error('cdp-ws-closed')); });
+    });
+}
+
+async function daoCdpEnsureChrome(): Promise<any> {
+    try { return await daoCdpHttpGet('/json/version'); } catch { /* 未起 → 拉起 */ }
+    const exe = findBrowserExe();
+    if (!exe) throw new Error('no-chrome-found (browser_* 需本机存在 Chrome/Edge/Chromium)');
+    const profileDir = path.join(DAO_DIR, 'cdp-profile');
+    try { fs.mkdirSync(profileDir, { recursive: true }); } catch { /* 守柔 */ }
+    const args = [
+        '--remote-debugging-port=' + DAO_CDP_PORT,
+        '--remote-allow-origins=*',
+        '--user-data-dir=' + profileDir,
+        '--no-first-run', '--no-default-browser-check', '--disable-default-apps', '--disable-sync',
+        '--disable-features=Translate,msEdgeWelcomePage,msSync',
+        'about:blank',
+    ];
+    try { const child = childProcess.spawn(exe, args, { detached: true, stdio: 'ignore' }); child.unref(); } catch (e: any) { throw new Error('chrome-spawn: ' + (e && e.message)); }
+    for (let i = 0; i < 40; i++) { await daoMcpSleep(250); try { return await daoCdpHttpGet('/json/version'); } catch { /* 等就绪 */ } }
+    throw new Error('chrome-cdp-not-ready');
+}
+
+async function daoCdpPickPage(targetId?: string): Promise<any> {
+    await daoCdpEnsureChrome();
+    let list: any[] = await daoCdpHttpGet('/json/list') || [];
+    let pages = list.filter((t: any) => t.type === 'page' && t.webSocketDebuggerUrl);
+    if (targetId) { const t = pages.find((x: any) => x.id === targetId) || list.find((x: any) => x.id === targetId); if (!t || !t.webSocketDebuggerUrl) throw new Error('target-not-found: ' + targetId); return t; }
+    if (pages.length > 0) return pages[0];
+    const ver = await daoCdpHttpGet('/json/version');
+    await daoCdpBatch(ver.webSocketDebuggerUrl, [{ method: 'Target.createTarget', params: { url: 'about:blank' } }]);
+    await daoMcpSleep(300);
+    list = await daoCdpHttpGet('/json/list') || [];
+    pages = list.filter((t: any) => t.type === 'page' && t.webSocketDebuggerUrl);
+    if (pages.length === 0) throw new Error('no-page-target');
+    return pages[0];
+}
+
+// 工具清单 — 名称严格对齐知识库《DAO Bridge MCP 使用文档(四大模块)》。
+function daoMcpToolDefs(): any[] {
+    const S = (props: any, required?: string[]) => ({ type: 'object', properties: props, required: required || [] });
+    return [
+        // pc_* · 操作整机 (渲染在访问者浏览器, 此处只产数据)
+        { name: 'pc_exec', description: '整机执行命令(本机 shell·经 IDE 终端)', inputSchema: S({ cmd: { type: 'string' }, cwd: { type: 'string' }, timeout: { type: 'number' } }, ['cmd']) },
+        { name: 'pc_screenshot', description: '整机截屏(JPEG·虚拟全屏)', inputSchema: S({ scale: { type: 'number', description: '10-100·缩放百分比' }, quality: { type: 'number', description: '20-95·JPEG 质量' } }) },
+        { name: 'pc_click', description: '整机鼠标点击(归一化坐标 nx,ny∈[0,1])', inputSchema: S({ nx: { type: 'number' }, ny: { type: 'number' }, button: { type: 'string', enum: ['left', 'right', 'middle'] }, action: { type: 'string', enum: ['click', 'down', 'up'] } }, ['nx', 'ny']) },
+        { name: 'pc_move', description: '整机鼠标移动(归一化坐标)', inputSchema: S({ nx: { type: 'number' }, ny: { type: 'number' } }, ['nx', 'ny']) },
+        { name: 'pc_scroll', description: '整机滚轮(归一化坐标·dy 正上负下)', inputSchema: S({ nx: { type: 'number' }, ny: { type: 'number' }, dy: { type: 'number' } }, ['dy']) },
+        { name: 'pc_type', description: '整机键盘输入文本(SendKeys)', inputSchema: S({ text: { type: 'string' } }, ['text']) },
+        { name: 'pc_key', description: '整机虚拟键(vk=Windows 虚拟键码·如 13=Enter 27=Esc)', inputSchema: S({ vk: { type: 'number' }, action: { type: 'string', enum: ['press', 'down', 'up'] } }, ['vk']) },
+        { name: 'pc_file_read', description: '读本机文件(绝对路径)', inputSchema: S({ path: { type: 'string' } }, ['path']) },
+        { name: 'pc_file_write', description: '写本机文件(绝对路径)', inputSchema: S({ path: { type: 'string' }, content: { type: 'string' } }, ['path', 'content']) },
+        { name: 'pc_ls', description: '列目录(绝对路径·缺省取工作区根)', inputSchema: S({ path: { type: 'string' } }) },
+        // browser_* · Chrome CDP (隔离实例)
+        { name: 'browser_launch', description: '拉起/确认 browser_* 专用隔离 Chrome(CDP)并返回版本', inputSchema: S({}) },
+        { name: 'browser_targets', description: '列出 CDP 全部 target(页面/标签)', inputSchema: S({}) },
+        { name: 'browser_navigate', description: '导航: 给 targetId 则原标签导航, 否则新建标签', inputSchema: S({ url: { type: 'string' }, targetId: { type: 'string' } }, ['url']) },
+        { name: 'browser_eval', description: '在页面上下文执行 JS 并返回值(Runtime.evaluate·await Promise)', inputSchema: S({ code: { type: 'string' }, targetId: { type: 'string' } }, ['code']) },
+        { name: 'browser_screenshot', description: '页面截图(CDP·jpeg/png)', inputSchema: S({ targetId: { type: 'string' }, format: { type: 'string', enum: ['jpeg', 'png'] }, quality: { type: 'number' } }) },
+        // plugin_* · 插件本体/工作区
+        { name: 'plugin_health', description: '插件健康/版本/工作区/端口', inputSchema: S({}) },
+        { name: 'plugin_exec', description: '工作区执行命令(缺省 cwd=工作区根)', inputSchema: S({ cmd: { type: 'string' }, cwd: { type: 'string' }, timeout: { type: 'number' } }, ['cmd']) },
+        { name: 'plugin_ls', description: '列工作区目录', inputSchema: S({ path: { type: 'string' } }) },
+        { name: 'plugin_file', description: '读工作区文件', inputSchema: S({ path: { type: 'string' } }, ['path']) },
+        { name: 'plugin_write', description: '写工作区文件', inputSchema: S({ path: { type: 'string' }, content: { type: 'string' } }, ['path', 'content']) },
+        { name: 'plugin_edit', description: '按范围编辑文件(WorkspaceEdit)', inputSchema: S({ file: { type: 'string' }, edits: { type: 'array' } }, ['file', 'edits']) },
+        { name: 'plugin_search', description: '按 glob 查找文件', inputSchema: S({ pattern: { type: 'string' }, exclude: { type: 'string' }, maxResults: { type: 'number' } }) },
+        { name: 'plugin_terminal', description: '终端: 有 terminalId 则发送, 否则新建终端', inputSchema: S({ terminalId: { type: 'string' }, text: { type: 'string' }, name: { type: 'string' }, cwd: { type: 'string' } }) },
+        { name: 'plugin_git', description: 'Git 仓库状态', inputSchema: S({}) },
+        { name: 'plugin_tools', description: '调用插件内置工具集(executeTool)', inputSchema: S({ tool: { type: 'string' }, args: { type: 'object' } }, ['tool']) },
+        // vscode_* · VSCode 暴露
+        { name: 'vscode_command', description: '执行 VSCode 命令', inputSchema: S({ command: { type: 'string' }, args: { type: 'array' } }, ['command']) },
+        { name: 'vscode_commands', description: '列出全部可用 VSCode 命令', inputSchema: S({}) },
+        { name: 'vscode_diagnostics', description: '工作区诊断(错误/警告)', inputSchema: S({}) },
+        { name: 'vscode_definitions', description: '跳转定义', inputSchema: S({ file: { type: 'string' }, line: { type: 'number' }, char: { type: 'number' } }, ['file', 'line', 'char']) },
+        { name: 'vscode_references', description: '查找引用', inputSchema: S({ file: { type: 'string' }, line: { type: 'number' }, char: { type: 'number' } }, ['file', 'line', 'char']) },
+        { name: 'vscode_symbols', description: '工作区符号搜索', inputSchema: S({ query: { type: 'string' } }, ['query']) },
+    ];
+}
+
+async function daoMcpCallTool(name: string, a: any): Promise<any> {
+    a = a || {};
+    switch (name) {
+        // ── pc_* ──
+        case 'pc_exec': { const r = await daoMcpInvoke('/api/exec', { cmd: a.cmd, type: 'terminal', cwd: a.cwd, timeout: a.timeout }); return daoMcpText(r && r.stdout !== undefined ? r.stdout : r); }
+        case 'pc_screenshot': { const b64 = await pcGuiCap(daoClamp(a.scale, 10, 100, 60), daoClamp(a.quality, 20, 95, 55)); return daoMcpImage(b64, 'image/jpeg'); }
+        case 'pc_click': { const ok = pcGuiInput({ op: 'btn', nx: a.nx, ny: a.ny, button: a.button || 'left', action: a.action || 'click' }); return ok ? daoMcpText('ok') : daoMcpErr('gui-unavailable'); }
+        case 'pc_move': { const ok = pcGuiInput({ op: 'move', nx: a.nx, ny: a.ny }); return ok ? daoMcpText('ok') : daoMcpErr('gui-unavailable'); }
+        case 'pc_scroll': { const ok = pcGuiInput({ op: 'scroll', nx: a.nx, ny: a.ny, dy: a.dy }); return ok ? daoMcpText('ok') : daoMcpErr('gui-unavailable'); }
+        case 'pc_type': { const ok = pcGuiInput({ op: 'text', s: String(a.text == null ? '' : a.text) }); return ok ? daoMcpText('ok') : daoMcpErr('gui-unavailable'); }
+        case 'pc_key': {
+            const vk = parseInt(String(a.vk), 10); if (!isFinite(vk)) return daoMcpErr('vk required (number)');
+            const act = a.action || 'press';
+            if (act === 'down' || act === 'up') { const ok = pcGuiInput({ op: 'key', vk, down: act === 'down' }); return ok ? daoMcpText('ok') : daoMcpErr('gui-unavailable'); }
+            const d = pcGuiInput({ op: 'key', vk, down: true }); const u = pcGuiInput({ op: 'key', vk, down: false }); return (d && u) ? daoMcpText('ok') : daoMcpErr('gui-unavailable');
+        }
+        case 'pc_file_read': { const r = await daoMcpInvoke('/api/file', null, { path: a.path }); return daoMcpText(r && r.content !== undefined ? r.content : r); }
+        case 'pc_file_write': { const r = await daoMcpInvoke('/api/write', { path: a.path, content: a.content }); return daoMcpText(r); }
+        case 'pc_ls': { const r = await daoMcpInvoke('/api/ls', null, a.path ? { path: a.path } : undefined); return daoMcpText(r); }
+        // ── plugin_* ──
+        case 'plugin_health': return daoMcpText(await daoMcpInvoke('/api/health'));
+        case 'plugin_exec': { const r = await daoMcpInvoke('/api/exec', { cmd: a.cmd, type: 'terminal', cwd: a.cwd, timeout: a.timeout }); return daoMcpText(r && r.stdout !== undefined ? r.stdout : r); }
+        case 'plugin_ls': return daoMcpText(await daoMcpInvoke('/api/ls', null, a.path ? { path: a.path } : undefined));
+        case 'plugin_file': { const r = await daoMcpInvoke('/api/file', null, { path: a.path }); return daoMcpText(r && r.content !== undefined ? r.content : r); }
+        case 'plugin_write': return daoMcpText(await daoMcpInvoke('/api/write', { path: a.path, content: a.content }));
+        case 'plugin_edit': return daoMcpText(await daoMcpInvoke('/api/edit', { file: a.file, edits: a.edits }));
+        case 'plugin_search': return daoMcpText(await daoMcpInvoke('/api/search', { pattern: a.pattern, exclude: a.exclude, maxResults: a.maxResults }));
+        case 'plugin_terminal': {
+            if (a.terminalId) return daoMcpText(await daoMcpInvoke('/api/terminal/send', { terminalId: a.terminalId, text: a.text }));
+            const r = await daoMcpInvoke('/api/terminal/create', { name: a.name, cwd: a.cwd });
+            if (a.text && r && r.terminalId) { await daoMcpInvoke('/api/terminal/send', { terminalId: r.terminalId, text: a.text }); }
+            return daoMcpText(r);
+        }
+        case 'plugin_git': return daoMcpText(await daoMcpInvoke('/api/git/status'));
+        case 'plugin_tools': return daoMcpText(await daoMcpInvoke('/api/tools', { tool: a.tool, args: a.args || {} }));
+        // ── vscode_* ──
+        case 'vscode_command': return daoMcpText(await daoMcpInvoke('/api/command', { command: a.command, args: a.args || [] }));
+        case 'vscode_commands': return daoMcpText(await daoMcpInvoke('/api/commands'));
+        case 'vscode_diagnostics': return daoMcpText(await daoMcpInvoke('/api/diagnostics'));
+        case 'vscode_definitions': return daoMcpText(await daoMcpInvoke('/api/definitions', { file: a.file, line: a.line, char: a.char }));
+        case 'vscode_references': return daoMcpText(await daoMcpInvoke('/api/references', { file: a.file, line: a.line, char: a.char }));
+        case 'vscode_symbols': return daoMcpText(await daoMcpInvoke('/api/symbols', { query: a.query }));
+        // ── browser_* (Chrome CDP) ──
+        case 'browser_launch': return daoMcpText(await daoCdpEnsureChrome());
+        case 'browser_targets': { await daoCdpEnsureChrome(); const list: any[] = await daoCdpHttpGet('/json/list') || []; return daoMcpText(list.map((t: any) => ({ id: t.id, type: t.type, title: t.title, url: t.url }))); }
+        case 'browser_navigate': {
+            if (!a.url) return daoMcpErr('url required');
+            if (a.targetId) { const t = await daoCdpPickPage(a.targetId); await daoCdpBatch(t.webSocketDebuggerUrl, [{ method: 'Page.enable' }, { method: 'Page.navigate', params: { url: a.url } }]); return daoMcpText({ targetId: a.targetId, url: a.url }); }
+            const ver = await daoCdpEnsureChrome(); const r = await daoCdpBatch(ver.webSocketDebuggerUrl, [{ method: 'Target.createTarget', params: { url: a.url } }]); return daoMcpText({ targetId: r && r.targetId, url: a.url });
+        }
+        case 'browser_eval': {
+            if (!a.code) return daoMcpErr('code required');
+            const t = await daoCdpPickPage(a.targetId);
+            const r = await daoCdpBatch(t.webSocketDebuggerUrl, [{ method: 'Runtime.evaluate', params: { expression: a.code, returnByValue: true, awaitPromise: true } }]);
+            if (r && r.exceptionDetails) return daoMcpErr('eval: ' + JSON.stringify(r.exceptionDetails));
+            const ro = r && r.result; const val = ro ? (ro.value !== undefined ? ro.value : (ro.description !== undefined ? ro.description : ro.type)) : undefined;
+            return daoMcpText(val === undefined ? 'undefined' : val);
+        }
+        case 'browser_screenshot': {
+            const t = await daoCdpPickPage(a.targetId); const fmt = a.format === 'png' ? 'png' : 'jpeg';
+            const params: any = fmt === 'jpeg' ? { format: 'jpeg', quality: daoClamp(a.quality, 10, 95, 60) } : { format: 'png' };
+            const r = await daoCdpBatch(t.webSocketDebuggerUrl, [{ method: 'Page.enable' }, { method: 'Page.captureScreenshot', params }]);
+            if (!r || !r.data) return daoMcpErr('screenshot-empty');
+            return daoMcpImage(r.data, fmt === 'png' ? 'image/png' : 'image/jpeg');
+        }
+        default: return daoMcpErr('unknown tool: ' + name);
+    }
+}
+
+// MCP 服务版本/能力。
+const DAO_MCP_PROTOCOL = '2024-11-05';
+async function daoMcpProcessRpc(msg: any): Promise<any | null> {
+    const id = (msg && msg.id !== undefined) ? msg.id : null;
+    const method = msg && msg.method;
+    // 通知(无 id) → 不回响应
+    if (id === null && typeof method === 'string' && method.indexOf('notifications/') === 0) return null;
+    try {
+        if (method === 'initialize') {
+            const pv = (msg.params && typeof msg.params.protocolVersion === 'string') ? msg.params.protocolVersion : DAO_MCP_PROTOCOL;
+            return { jsonrpc: '2.0', id, result: { protocolVersion: pv, capabilities: { tools: { listChanged: false } }, serverInfo: { name: 'DAO Bridge MCP', version: EXT_VERSION } } };
+        }
+        if (method === 'ping') return { jsonrpc: '2.0', id, result: {} };
+        if (method === 'tools/list') return { jsonrpc: '2.0', id, result: { tools: daoMcpToolDefs() } };
+        if (method === 'tools/call') {
+            const nm = msg.params && msg.params.name; const args = (msg.params && msg.params.arguments) || {};
+            if (!nm) return { jsonrpc: '2.0', id, error: { code: -32602, message: 'missing tool name' } };
+            let toolResult: any;
+            try { toolResult = await daoMcpCallTool(String(nm), args); }
+            catch (e: any) { toolResult = daoMcpErr((e && e.message) || String(e)); }
+            return { jsonrpc: '2.0', id, result: toolResult };
+        }
+        if (method === 'resources/list') return { jsonrpc: '2.0', id, result: { resources: [] } };
+        if (method === 'prompts/list') return { jsonrpc: '2.0', id, result: { prompts: [] } };
+        if (id === null) return null; // 其余通知
+        return { jsonrpc: '2.0', id, error: { code: -32601, message: 'method not found: ' + String(method) } };
+    } catch (e: any) {
+        return { jsonrpc: '2.0', id, error: { code: -32603, message: (e && e.message) || String(e) } };
+    }
+}
+
+// /mcp 入口 — Streamable HTTP: POST 一发一收 JSON; GET 无 SSE 返 405; 强制 Bearer 鉴权。
+async function daoMcpHandle(req: any): Promise<any> {
+    const jhead = { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' };
+    const method = (req && req.method) || 'GET';
+    if (method === 'GET' || method === 'HEAD') {
+        // 无服务端→客户端 SSE 流 → 按 MCP 规范返 405 (调用方据此走纯 POST), 但给出清晰 JSON 提示。
+        return { _proxy: true, status: 405, contentType: 'application/json; charset=utf-8', headers: { ...jhead, 'Allow': 'POST, OPTIONS' }, body: JSON.stringify({ jsonrpc: '2.0', error: { code: -32000, message: 'DAO Bridge MCP: use HTTP POST (JSON-RPC). No GET SSE stream.' }, id: null }) };
+    }
+    if (method !== 'POST') {
+        return { _proxy: true, status: 405, contentType: 'application/json; charset=utf-8', headers: { ...jhead, 'Allow': 'POST, OPTIONS' }, body: JSON.stringify({ jsonrpc: '2.0', error: { code: -32000, message: 'method not allowed' }, id: null }) };
+    }
+    if (!checkAuth(req)) {
+        return { _proxy: true, status: 401, contentType: 'application/json; charset=utf-8', headers: { ...jhead, 'WWW-Authenticate': 'Bearer' }, body: JSON.stringify({ jsonrpc: '2.0', error: { code: -32001, message: 'unauthorized' }, id: null }) };
+    }
+    let raw = '';
+    try { raw = await readBody(req) || ''; } catch { raw = ''; }
+    let parsed: any;
+    try { parsed = raw ? JSON.parse(raw) : null; } catch (e) { return { _proxy: true, status: 400, contentType: 'application/json; charset=utf-8', headers: jhead, body: JSON.stringify({ jsonrpc: '2.0', error: { code: -32700, message: 'parse error' }, id: null }) }; }
+    if (parsed === null) return { _proxy: true, status: 400, contentType: 'application/json; charset=utf-8', headers: jhead, body: JSON.stringify({ jsonrpc: '2.0', error: { code: -32600, message: 'empty request' }, id: null }) };
+    if (Array.isArray(parsed)) {
+        const out: any[] = [];
+        for (const m of parsed) { const r = await daoMcpProcessRpc(m); if (r) out.push(r); }
+        if (out.length === 0) return { _proxy: true, status: 202, contentType: 'application/json; charset=utf-8', headers: jhead, body: '' };
+        return { _proxy: true, status: 200, contentType: 'application/json; charset=utf-8', headers: jhead, body: JSON.stringify(out) };
+    }
+    const resp = await daoMcpProcessRpc(parsed);
+    if (!resp) return { _proxy: true, status: 202, contentType: 'application/json; charset=utf-8', headers: jhead, body: '' };
+    return { _proxy: true, status: 200, contentType: 'application/json; charset=utf-8', headers: jhead, body: JSON.stringify(resp) };
+}
+
 async function handleRouteInternal(route: string, url: URL, req: any, token: string, res?: any): Promise<any> {
+    // ── 归一 · 四大模块综合 MCP (Streamable HTTP / JSON-RPC) ──
+    //   必须在认证门禁与 isAppProxyPassthrough 之前处理: 此前 /mcp 落入官网 SPA 兜底,
+    //   调用方只见「登录 Devin」认证注入 HTML。此分支令 /mcp 以真正的 MCP 协议应答,
+    //   把 pc_*/browser_*/plugin_*/vscode_* 统一代理为单一公网 MCP 端点 (守其雌·只搬协议)。
+    if (route === '/mcp' || route === '/mcp/') {
+        return await daoMcpHandle(req);
+    }
+
     // 认证检查（relay请求也需认证，devin-cloud代理有自己的认证）
     // 归一 · 独立 HTTP 外壳须可被任意 IDE 内置浏览器/手机直接打开, 故 /shell 与 /api/shell/* 免 token
     //   (本地服务器默认仅绑 localhost; 远程经 DAO Bridge 隧道层把关)。
