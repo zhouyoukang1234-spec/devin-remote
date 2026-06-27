@@ -5110,6 +5110,56 @@ reach / **magnitude**.
 
 ---
 
+## F176 — completing the value read dual on modern apps: LegacyIAccessible fallback (`uia_get_value`, R137)
+
+**Ground.** Windows Server 2022, real Chrome. Drive a form: write a string into a
+text `<input>` by meaning (`uia_set_value`), then read it back by meaning
+(`uia_get_value`).
+
+**Friction (surfaced by driving a real form, not speculation).** The write *lands*
+— the DOM confirms the input's `.value` changed — yet `uia_get_value` returns `""`.
+Chrome answers a ValuePattern **write** to a text input but not a ValuePattern
+**read**; the write's read dual was silently blank on modern apps. A write you
+cannot read back is a write you cannot trust (反者道之動).
+
+**Primitive.** `uia_get_value` now tries the ValuePattern first and, when that comes
+back empty, falls back to the **LegacyIAccessible** pattern (the MSAA bridge,
+`get_CurrentValue`, pattern id 10018, vtable 8), which carries the live text where
+ValuePattern's read does not:
+
+```python
+def uia_get_value(win, name=None, ctype=None) -> str:
+    el = _find_ptr(...)
+    return _value_pattern_text(el) or _legacy_value_text(el)
+```
+
+**Live.** Chrome `<input aria-label=Name value=PresetVal>`: `uia_get_value` reads
+`"PresetVal"` (where the ValuePattern read alone is `""`); `uia_set_value("ChangedByMeaning")`
+→ DOM `.value`→`"ChangedByMeaning"` → `uia_get_value`→`"ChangedByMeaning"`. The
+write-then-read dual is whole on a modern app. R137 (`round_uia_modern_value`).
+Full suite **847/847** clean, EXIT=0.
+
+**Two pre-existing fragilities hardened while validating (道法自然 — fix what the
+practice exposes).**
+- *R131 contrast.* The marker string leaks into the `data:` URL, which the new Legacy
+  fallback now surfaces as the Document's value; the honest discriminator for "the
+  single-line value spine does not carry the rendered body" is the *rendered body
+  phrase*, not the marker.
+- *R75/76/78 "uniform region → no ink".* `capture_rgb` grabs the whole desktop, so a
+  dark page field abuts Chrome's chrome. The ~2px-tall *white* toolbar/content seam at
+  that boundary is invisible on a white field (white-on-white) but reads as ink on a
+  dark field — so only the dark uniform scenes broke, and only when the window geometry
+  put the seam inside the cropped field. `_drop_chrome_seam` pushes the field's top edge
+  past the seam, restoring the region to the page content the assertion means.
+
+**Lesson (道法自然).** 無有入於無間 — *the formless enters where there is no gap.*
+When the front door (ValuePattern read) is shut though the same door admitted the
+write, do not force it; the platform publishes a second, older spine (MSAA) that carries
+the same truth. The read dual is completed not by a louder write but by perceiving
+through the channel the world leaves open.
+
+---
+
 ## Frontier (next honest rounds)
 
 These are *not yet built* — they are the next real surfaces to push into. Each
