@@ -76,7 +76,7 @@ jobs:
             // 缺了 dao-relay-deploy.yml → addons/dao-relay 改动进 main 后 Worker 从不重部署 →
             //   单网页控台(/console·/i-init·/i/ 边缘自愈等)的修复永远不上线、公网通道用旧逻辑。
             if (mergedAny) {
-              for (const wf of ['release.yml', 'android-release.yml', 'dao-relay-deploy.yml']) {
+              for (const wf of ['release.yml', 'android-release.yml', 'dao-relay-deploy.yml', 'pin-console-host.yml']) {
                 try {
                   await github.rest.actions.createWorkflowDispatch({ owner, repo, workflow_id: wf, ref: 'main' });
                   core.notice(`dispatched ${wf} to publish latest release`);
