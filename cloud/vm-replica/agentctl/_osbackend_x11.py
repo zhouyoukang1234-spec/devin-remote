@@ -1662,7 +1662,12 @@ def _impl_uia_invoke(win: int, name=None, ctype=None) -> bool:
     click-only surface a toolkit never wired for accessibility), fall through to
     the gesture floor: locate its rect by meaning and land a real click there.
     So invoke-by-meaning answers for *any* visible control, not only the ones a
-    toolkit happened to make actionable."""
+    toolkit happened to make actionable.
+
+    F216: like uia_click, skip past no-rect matches so a shadow label cannot
+    block the real actionable control behind it. Action and rect are read while
+    the acc is alive inside the visit closure, then walk continues if neither
+    succeeds — so a nameless label shadow never blocks the real button."""
     at = _atspi()
     if not at:
         return False
@@ -1671,23 +1676,28 @@ def _impl_uia_invoke(win: int, name=None, ctype=None) -> bool:
         if not fr:
             return False
         try:
-            acc = _find_acc(at, fr, name, ctype)
-            if not acc:
-                return False
-            try:
+            result = [False]
+            def visit(acc, depth):
+                if depth <= 0 or not _match(at, acc, name, ctype):
+                    return None
                 action = at.atspi_accessible_get_action_iface(acc)
                 if action:
                     ok = bool(at.atspi_action_do_action(action, 0, None))
                     _unref(action)
                     if ok:
-                        return True
-                # no Action, or it refused — fall back to a real click on the rect
-                rect = _acc_rect(at, acc)
-                if rect:
-                    return _click_rect(win, rect)
-                return False
-            finally:
-                _unref(acc)
+                        result[0] = True
+                        return "STOP"
+                r = _acc_rect(at, acc)
+                if r:
+                    result[0] = r
+                    return "STOP"
+                return None
+            _walk(at, fr, visit)
+            if result[0] is True:
+                return True
+            if result[0] and result[0] is not False:
+                return _click_rect(win, result[0])
+            return False
         finally:
             _unref(fr)
 
@@ -1789,7 +1799,11 @@ def _impl_uia_click(win: int, name=None, ctype=None) -> bool:
     union of the two floors: semantics choose *what*, pixels deliver the *where*.
     Use it for any visible control regardless of whether the toolkit exposed an
     Action (text regions, canvases, custom widgets); uia_invoke calls into this
-    same path when a control has no actionable interface."""
+    same path when a control has no actionable interface.
+
+    F216: when multiple elements share the same name (e.g. a label '=' and a
+    button '='), the first DFS hit may be a non-visible label with no screen
+    rect. We walk *all* matches and click the first one that has a valid rect."""
     at = _atspi()
     if not at:
         return False
@@ -1798,16 +1812,18 @@ def _impl_uia_click(win: int, name=None, ctype=None) -> bool:
         if not fr:
             return False
         try:
-            acc = _find_acc(at, fr, name, ctype)
-            if not acc:
+            hits = []
+            def visit(acc, depth):
+                if depth > 0 and _match(at, acc, name, ctype):
+                    r = _acc_rect(at, acc)
+                    if r:
+                        hits.append(r)
+                        return "STOP"
+                return None
+            _walk(at, fr, visit)
+            if not hits:
                 return False
-            try:
-                rect = _acc_rect(at, acc)
-            finally:
-                _unref(acc)
-            if not rect:
-                return False
-            return _click_rect(win, rect)
+            return _click_rect(win, hits[0])
         finally:
             _unref(fr)
 

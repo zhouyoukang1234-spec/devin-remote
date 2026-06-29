@@ -7043,6 +7043,29 @@ screen_observe) already handle `None` gracefully.
 
 ---
 
+## F216 — label shadows block `uia_click` / `uia_invoke` when multiple elements share a name
+
+**Friction (reproduced).**  gnome-calculator: `uia_click(wid, name='=')` returned
+`False` even though the `=` button was visible and had a valid rect.  `uia_find`
+returned a **label** named `'='` (type=Text, rect=None) that sits earlier in the
+DFS order than the **button** named `'='` (type=Button, rect=(904,724,64,92)).
+Same pattern for any app with redundant text labels echoing button names.
+
+**Root cause.**  `_find_acc` returns the first DFS match regardless of clickability.
+`_impl_uia_click` asked for its rect, got None, returned False — never tried the
+next match.
+
+**Fix.**  `_impl_uia_click` now walks all matches inside the visitor (where the
+acc pointer is still alive) and stops at the first one with a valid rect.
+`_impl_uia_invoke` does the same: tries the action interface, then the rect; if
+neither works on this match, continues the DFS to the next match.
+
+**Proof.** On gnome-calculator: `uia_click(wid, name='=')` → `True`, result
+display shows `1554` (42×37); `uia_invoke(wid, name='=')` → `True`, shows `100`
+(99+1). Both previously returned False.
+
+---
+
 ## Frontier (next honest rounds)
 
 These are *not yet built* — they are the next real surfaces to push into. Each
