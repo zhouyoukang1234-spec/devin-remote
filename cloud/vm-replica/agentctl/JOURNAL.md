@@ -7091,4 +7091,21 @@ will only grow a primitive once a real failure is reproduced.
   it is wholly meaning-operable as-is. With no surface where pairing both *applies* and *helps*, the
   honest floor for unlabeled drawn-caption fields is geometry/pixel. 知止不殆.
 
+- **Relative/raw pointer motion for a pointer-locked camera (FPS / 3D walk-mode) — investigated, the
+  friction did NOT reproduce, so `move_rel` was *not built*.** Hypothesis: a Pointer-Lock-API surface
+  pins the OS cursor and reads only `e.movementX/Y`, so the floor's absolute-only `move`
+  (`MOUSEEVENTF_MOVE | _ABSOLUTE`) would be invisible — a whole class (mouselook) un-turnable, owing a
+  relative `MOUSEEVENTF_MOVE`-without-ABSOLUTE primitive. Built a live pointer-lock cube fixture
+  (`requestPointerLock` on a synthetic click — which *did* grant the lock) and measured on this VM
+  (Windows + Chrome-for-Testing 137): **the hypothesis is false.** Chromium derives `movementX/Y` from
+  successive *absolute* raw-input positions, so absolute `move` turned the locked camera fully
+  (YAW 0.60→1.50 over 10 moves) and — because the cursor is pinned, every absolute event reads as a
+  delta from the lock centre — it turned **unboundedly** even when hammering one fixed coordinate
+  (YAW→193 over 30 moves at the screen edge). A speculative `move_rel` (Win `MOUSEEVENTF_MOVE` sans
+  ABSOLUTE / X11 `XTestFakeRelativeMotionEvent`) *did* also drive it, but offered **no capability the
+  existing absolute `move` lacks** on this surface, so it was reverted rather than shipped. The only
+  place relative would strictly win is a native consumer that reads RAWINPUT/DirectInput *relative*
+  axes and ignores absolute-flagged motion — no such app is installed to reproduce it. Until a real
+  surface fails on absolute motion, the floor owes no relative verb. 信言不美，知止不殆.
+
 > 為學者日益，聞道者日損。 We add primitives only by subtracting frictions.
