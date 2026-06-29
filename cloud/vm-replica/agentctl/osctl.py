@@ -863,6 +863,42 @@ def press_hold(x: int | None = None, y: int | None = None,
     _mouse_button(button, False)
 
 
+def mouse_down(x: int | None = None, y: int | None = None,
+               button: str = "left") -> None:
+    """Press a mouse button and **leave it down** (F211).
+
+    Every other mouse verb closes the press in the same call: :func:`click`
+    is down-then-up at once, :func:`drag` holds but only while *moving*,
+    :func:`press_hold` holds but *sleeps* the whole time — so the agent
+    cannot do anything *during* the hold. Yet a whole class of gestures is
+    exactly "button down, then act, then up": charge a shot while steering
+    with the arrow keys and release to fire; hold the middle button while a
+    keystroke toggles an axis (Blender); press on a list item, *scroll* the
+    list with the button still down, then drop past the fold; hold to paint
+    while a key changes the brush. None of these can be a single bundled
+    verb, because arbitrary other actions happen between the down and the up.
+    This is the down half on its own — optional move to ``(x, y)`` first,
+    then ``button`` (``"left"``/``"right"``/``"middle"``) down and held until
+    :func:`mouse_up`. The backend already owns the transition; F211 only lets
+    the two halves stand apart. 一陰一陽之謂道 — press and release are one
+    motion, but the world lives in the space the floor opens between them."""
+    if x is not None:
+        move(x, y)
+        time.sleep(0.02)
+    _mouse_button(button, True)
+
+
+def mouse_up(button: str = "left") -> None:
+    """Release a button held by :func:`mouse_down` (F211).
+
+    The up half. It releases wherever the cursor now is — so a
+    :func:`mouse_down` followed by any number of :func:`move`/:func:`glide`/
+    :func:`scroll`/key actions and then :func:`mouse_up` is a fully
+    *composable* drag-or-hold: the agent, not a single verb, decides what
+    happens across the press."""
+    _mouse_button(button, False)
+
+
 def triple_click(x: int | None = None, y: int | None = None,
                  gap: float = 0.05) -> None:
     """Three presses at one point — select a whole line/paragraph (F125).

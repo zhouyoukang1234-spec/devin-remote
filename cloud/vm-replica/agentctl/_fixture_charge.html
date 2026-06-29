@@ -1,0 +1,46 @@
+<!doctype html><html><head><meta charset="utf-8"><title>DAO_CHARGE</title>
+<style>html,body{margin:0;background:#202020}</style></head>
+<body><canvas id="c" width="860" height="380"></canvas>
+<script>
+// F211 fixture — a "charge & aim" surface that REQUIRES a decomposed press:
+//   * CHARGE grows every animation frame ONLY while the left button is HELD;
+//     an instant click can never accumulate it (down and up in one breath).
+//   * while held, ArrowUp/ArrowDown change AIM — so the agent must press keys
+//     *during* the hold, which press_hold (which only sleeps) cannot allow.
+//   * releasing freezes the last shot (a magenta disk at x∝charge, y∝aim) and
+//     resets CHARGE to 0.
+// The only honest way to drive it: mouse_down → (keys / wait) → mouse_up.
+// No accessibility; judged purely by pixels (green bar width, yellow marker y,
+// magenta shot position).
+const cv=document.getElementById('c'), g=cv.getContext('2d');
+const W=cv.width,H=cv.height;
+let held=false, charge=0, aim=0;          // aim in steps (+ = up)
+let shot=null;                             // {x,y} frozen on release
+function draw(){
+  g.fillStyle='#202020'; g.fillRect(0,0,W,H);
+  // charge bar (green) — width is the charge
+  g.fillStyle='#00ff00'; g.fillRect(20,40,Math.min(charge,760),34);
+  // aim marker (yellow square) — y moves with aim
+  const my=H/2 - aim*18;
+  g.fillStyle='#ffff00'; g.fillRect(W/2-16, my-16, 32, 32);
+  // frozen shot (magenta disk)
+  if(shot){ g.fillStyle='#ff00ff'; g.beginPath(); g.arc(shot.x,shot.y,22,0,7); g.fill(); }
+  g.fillStyle='#fff'; g.font='16px monospace';
+  g.fillText('CHARGE '+charge.toFixed(0)+'  AIM '+aim+'  HELD '+held, 20, 24);
+  window.__charge={charge:Math.round(charge),aim,held,shot};
+}
+function loop(){ if(held){ charge += 6; } draw(); requestAnimationFrame(loop); }
+cv.addEventListener('pointerdown',e=>{ if(e.button!==0) return;
+  held=true; charge=0; shot=null; e.preventDefault(); });
+addEventListener('pointerup',e=>{ if(e.button!==0||!held) return;
+  held=false;
+  // freeze a shot: x grows with charge, y follows aim
+  shot={x:Math.min(40+charge,820), y:H/2 - aim*18};
+  draw(); });
+addEventListener('keydown',e=>{
+  if(!held) return;                        // only aim WHILE charging
+  if(e.key==='ArrowUp'){ aim++; e.preventDefault(); }
+  if(e.key==='ArrowDown'){ aim--; e.preventDefault(); }
+});
+requestAnimationFrame(loop);
+</script></body></html>

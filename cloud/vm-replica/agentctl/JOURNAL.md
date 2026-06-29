@@ -6992,6 +6992,42 @@ already make, waiting for the name that lets them make it.
 
 ---
 
+## F211 — `mouse_down`/`mouse_up`: a press the agent can *act during*
+
+**Friction (forward practice, games/modeling).** A "charge & aim" canvas (no a11y): the charge accrues
+only **while** the left button is held, and the arrow keys aim **during** the hold; releasing fires a
+shot frozen at that charge and aim. The floor had four ways to press a mouse button — `click` (down+up in
+one breath), `double_click`, `drag` (holds, but only while *moving*), `press_hold` (holds, but only
+*sleeps* the whole duration) — and **not one of them lets the agent do anything else between the down and
+the up**. `click` cannot charge (it releases instantly); `press_hold` cannot aim (it is asleep, unable to
+inject the arrow keys mid-hold); `drag` cannot hold *still* while keys fire. The gesture "press, then act,
+then release" — charge-while-steering, hold-MMB-while-keying an axis in Blender, press-on-an-item-then-
+scroll-the-list-then-drop, hold-to-paint-while-a-key-changes-the-brush — was simply inexpressible.
+
+**Mechanism — split the one motion into its two halves.** The backend already owns both transitions
+(`_mouse_button(button, True/False)` — what every existing verb calls); they were only ever emitted as a
+matched pair inside a single call. F211 exposes them apart: `mouse_down(x, y, button)` presses and *leaves
+it down*; `mouse_up(button)` releases wherever the cursor now is. Between them the agent may `move`,
+`glide`, `scroll`, `tap` keys — anything — so a press becomes a span the agent times, not an instant a verb
+times. Both take the F210 `button` (`"left"`/`"right"`/`"middle"`). No new OS binding; only the seam.
+
+**Live (this VM).** `_probe_holdkeys.py` **4/4**, pixel channel only (green-bar area = charge, yellow
+marker y = aim, magenta disk = the frozen shot): a plain `click` cannot charge (`green=0` — the split is
+*necessary*); `mouse_down` + wait grows the charge (`green 616→1276` climbing while held); five `Up` taps
+**during the hold** raise the aim (marker `y 328→238`); and `mouse_up` fires a shot (magenta appears) and
+ends the hold so the charge **stops climbing** (`green frozen 1848→1848` — proof the release actually
+landed; were the button still down it would keep growing). Live HUD: `CHARGE 504 AIM 5 HELD false`.
+Regression green (`_probe_mousestate` 3/3 — the button-state reads still honest, `_probe_findcolors` 7/7,
+`_probe_winverbs` 15/15). Pure stdlib.
+
+**Lesson (道法自然).** 一陰一陽之謂道 — press and release are one motion, yin and yang of a single touch;
+but a verb that always emits both at once forbids the world that lives *between* them. The floor grows not
+only by adding senses or gestures, but by **opening a seam** in a motion it already had — letting the
+agent stand in the held instant and act, where before only the OS stood. 損之又損 — sometimes the
+primitive is made by *un*-bundling, not by building.
+
+---
+
 ## Frontier (next honest rounds)
 
 These are *not yet built* — they are the next real surfaces to push into. Each
