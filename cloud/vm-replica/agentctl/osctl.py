@@ -922,7 +922,8 @@ def mod_click(x: int | None = None, y: int | None = None,
 
 def drag(x0: int, y0: int, x1: int, y1: int,
          steps: int = 24, pause: float = 0.01,
-         hold: float = 0.05, right: bool = False) -> None:
+         hold: float = 0.05, right: bool = False,
+         button: str | None = None) -> None:
     """Press at (x0,y0), glide to (x1,y1) in steps, release (F121).
 
     :func:`click` only presses a point; a slider thumb, a canvas stroke, a
@@ -931,8 +932,17 @@ def drag(x0: int, y0: int, x1: int, y1: int,
     button up at the end. ``steps`` makes the motion continuous so
     drag-aware listeners (``mousemove`` while the button is held) see the
     path, not just the endpoints — a single jump from start to end reads
-    as a teleport and most drag handlers ignore it."""
-    button = "right" if right else "left"
+    as a teleport and most drag handlers ignore it.
+
+    ``button`` selects which button is held: ``"left"`` (default), ``"right"``,
+    or ``"middle"``. The whole class of 3D/CAD viewports — Blender, FreeCAD,
+    Maya, Fusion — bind *orbit* (and, with a modifier, *pan*) to the **middle**
+    button held while moving; left/right do something else or nothing, so those
+    apps are un-orbitable without a middle *drag* (a middle *click* cannot turn
+    the camera). The backend already owns the middle transitions (it is what
+    :func:`middle_click` presses); this just lets the stroke hold it. ``right``
+    is kept for back-compat and is ignored when ``button`` is given (F210)."""
+    button = button or ("right" if right else "left")
     move(x0, y0)
     time.sleep(0.02)
     _mouse_button(button, True)
@@ -949,7 +959,8 @@ def drag(x0: int, y0: int, x1: int, y1: int,
 
 def mod_drag(x0: int, y0: int, x1: int, y1: int, *mods: int,
              steps: int = 24, pause: float = 0.01,
-             hold: float = 0.05, right: bool = False) -> None:
+             hold: float = 0.05, right: bool = False,
+             button: str | None = None) -> None:
     """Drag with modifier keys held down through the whole stroke (F129).
 
     A plain :func:`drag` moves a handle freely. But a held modifier changes what
@@ -964,7 +975,8 @@ def mod_drag(x0: int, y0: int, x1: int, y1: int, *mods: int,
     for vk in mods:
         key_down(vk)
     time.sleep(0.01)
-    drag(x0, y0, x1, y1, steps=steps, pause=pause, hold=hold, right=right)
+    drag(x0, y0, x1, y1, steps=steps, pause=pause, hold=hold,
+         right=right, button=button)
     for vk in reversed(mods):
         key_up(vk)
 

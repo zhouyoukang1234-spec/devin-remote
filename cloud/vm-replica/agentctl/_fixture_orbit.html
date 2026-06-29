@@ -1,0 +1,73 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>DAO_ORBIT</title>
+<style>html,body{margin:0;padding:0;background:#202020;overflow:hidden}
+#c{display:block;background:#202020;cursor:grab}</style></head>
+<body>
+<canvas id="c" width="820" height="520"></canvas>
+<script>
+// Opaque 3D viewport stand-in: a solid cube with 6 distinctly-coloured faces,
+// software-projected on a 2D canvas. NO DOM controls, NO a11y. You orbit it by
+// DRAGGING (the handler integrates per-pointermove deltas, like real 3D apps:
+// Blender/Three.js OrbitControls). A coarse teleport-drag that emits no
+// intermediate moves would barely rotate it — so this tests drag granularity.
+const cv = document.getElementById('c'), g = cv.getContext('2d');
+const W = cv.width, H = cv.height, CX = W/2, CY = H/2, S = 130;
+let yaw = 0.5, pitch = 0.4;        // radians
+let panx = 0, pany = 0;             // pan offset (shift+middle)
+let moves = 0;                      // count of orbit/pan deltas applied
+// cube vertices
+const V = [[-1,-1,-1],[1,-1,-1],[1,1,-1],[-1,1,-1],[-1,-1,1],[1,-1,1],[1,1,1],[-1,1,1]];
+// faces (vertex indices) + colour; chosen so each axis face is a pure primary
+const F = [
+  {v:[0,1,2,3], c:'#ff0000'}, // -z red
+  {v:[4,5,6,7], c:'#00ff00'}, // +z green
+  {v:[0,1,5,4], c:'#0000ff'}, // -y blue
+  {v:[2,3,7,6], c:'#ffff00'}, // +y yellow
+  {v:[1,2,6,5], c:'#ff00ff'}, // +x magenta
+  {v:[0,3,7,4], c:'#00ffff'}, // -x cyan
+];
+function rot(p){
+  let [x,y,z]=p;
+  let x1=x*Math.cos(yaw)-z*Math.sin(yaw), z1=x*Math.sin(yaw)+z*Math.cos(yaw);
+  let y2=y*Math.cos(pitch)-z1*Math.sin(pitch), z2=y*Math.sin(pitch)+z1*Math.cos(pitch);
+  return [x1,y2,z2];
+}
+function draw(){
+  g.fillStyle='#202020'; g.fillRect(0,0,W,H);
+  const P=V.map(rot);
+  // painter's algorithm: sort faces by mean depth
+  const order=F.map((f,i)=>({i,z:f.v.reduce((s,k)=>s+P[k][2],0)/4})).sort((a,b)=>a.z-b.z);
+  for(const {i} of order){
+    const f=F[i];
+    g.beginPath();
+    f.v.forEach((k,j)=>{const p=P[k]; const sx=CX+panx+p[0]*S, sy=CY+pany+p[1]*S; j?g.lineTo(sx,sy):g.moveTo(sx,sy);});
+    g.closePath(); g.fillStyle=f.c; g.fill(); g.strokeStyle='#000'; g.lineWidth=2; g.stroke();
+  }
+  // HUD
+  g.fillStyle='#fff'; g.font='16px monospace';
+  g.fillText('YAW '+yaw.toFixed(2)+'  PITCH '+pitch.toFixed(2)+'  PAN '+panx.toFixed(0)+','+pany.toFixed(0)+'  MOVES '+moves, 12, 22);
+  window.__orbit={yaw,pitch,panx,pany,moves};
+}
+// Blender/CAD convention: ONLY the MIDDLE button (e.button===1) orbits; with
+// Shift held it pans. Left/right drag do nothing here — so this cube is
+// un-turnable without a real middle-button *drag* (a middle click cannot do it).
+let dragging=false, panning=false, lx=0, ly=0;
+cv.addEventListener('pointerdown',e=>{
+  if(e.button!==1) return;            // middle only
+  dragging=true; panning=e.shiftKey; lx=e.clientX; ly=e.clientY;
+  cv.style.cursor='grabbing'; e.preventDefault();
+});
+addEventListener('pointerup',e=>{ if(e.button===1){dragging=false; cv.style.cursor='grab';} });
+addEventListener('pointermove',e=>{
+  if(!dragging) return;
+  const dx=e.clientX-lx, dy=e.clientY-ly; lx=e.clientX; ly=e.clientY;
+  if(panning){ panx += dx; pany += dy; } else { yaw += dx*0.01; pitch += dy*0.01; }
+  moves++;
+  draw();
+});
+// middle button on a canvas would otherwise autoscroll; suppress it
+cv.addEventListener('auxclick',e=>{if(e.button===1)e.preventDefault();});
+cv.addEventListener('mousedown',e=>{if(e.button===1)e.preventDefault();});
+draw();
+</script>
+</body></html>

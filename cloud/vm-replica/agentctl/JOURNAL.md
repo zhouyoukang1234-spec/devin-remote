@@ -6955,6 +6955,43 @@ ball and the paddle are two readings of a single glance.
 
 ---
 
+## F210 — `drag(button="middle")`: the gesture that turns every 3D/CAD camera
+
+**Friction (forward practice, modeling domain).** Stepping into the modeling/3D domain — an opaque GPU
+viewport, the canvas family again but now a *camera* instead of a sprite — the subject is a colour-faced
+cube software-projected on a `<canvas>` that follows the one convention shared by Blender, FreeCAD, Maya
+and Fusion: **the middle mouse button orbits**, Shift+middle pans, and left/right do something else or
+nothing. The floor drags beautifully (F121 emits ~24 intermediate `pointermove`s so the handler integrates
+a real arc, not a teleport), but `drag`/`mod_drag` only ever exposed **left or right** via `right: bool`.
+The middle button it could *click* (`middle_click`) it could not *hold through a stroke* — so the entire
+class of professional 3D/CAD viewports was literally un-turnable: every orbit gesture is a middle **drag**,
+and a middle click cannot rotate a camera.
+
+**Mechanism — let the held stroke use a transition the backend already owns.** This is not a new OS
+primitive: `_mouse_button("middle", …)` is exactly what `middle_click` already presses (Win32
+`MOUSEEVENTF_MIDDLEDOWN/UP`, X11 `Button2`). `drag` simply hard-coded `"right" if right else "left"`.
+F210 adds `button: str | None` (`"left"`/`"right"`/`"middle"`) to `drag` and threads it through `mod_drag`
+(so Shift+middle pan works), keeping `right=` for back-compat. 為而不爭 — no new verb, no new binding; the
+gesture was always expressible, the signature just refused to say it.
+
+**Live (this VM).** `_probe_middledrag.py` **4/4**, judged through the **pixel channel only** (CDP was
+down; the cube is read by the area of each coloured face and its centroid on the real screen — the floor's
+own sense as oracle): a **LEFT** drag across a middle-only viewport changes *nothing* (`area_change=0.000`
+— proving a middle drag is *necessary*, not a nicety); a horizontal **MIDDLE** drag orbits (faces change,
+`area_change=1.02`); a vertical **MIDDLE** drag tilts (`area_change=1.52`); and a **Shift+MIDDLE** drag
+(`mod_drag(..., button="middle")`) pans the whole cube `dx=160 px` right while the faces stay the same
+(`area_change=0.004`). The live HUD ended at `YAW 2.30 PITCH 2.00 PAN 160,0 MOVES 50` — the floor turned an
+opaque camera with no accessibility at all. Regression green (`_probe_findcolors` 7/7, `_probe_winverbs`
+15/15, `_probe_pixel`, `_probe_keystate`, `_probe_mousestate`); `_probe_drag` exercises left/right and is
+unchanged by the additive parameter. Pure stdlib.
+
+**Lesson (道法自然).** 大制無割 — the middle drag was never a missing power, only an undivided one: the
+press, the path, the release all existed; the floor had merely never been told the stroke could hold the
+*middle*. The deepest frontier of the pixel domain is often not a new sense but a gesture the hands could
+already make, waiting for the name that lets them make it.
+
+---
+
 ## Frontier (next honest rounds)
 
 These are *not yet built* — they are the next real surfaces to push into. Each
