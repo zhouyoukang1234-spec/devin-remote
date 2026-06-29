@@ -7119,4 +7119,67 @@ backend for all core semantic operations.
 
 ---
 
+### F218 — ComboBox `uia_select` highlights but doesn't commit
+
+| date | 2026-06-29 |
+|---|---|
+| surface | FreeCAD workbench ComboBox (Qt), also reproduced on Audacity (wx) |
+| root cause | AT-SPI Selection.selectChild moves highlight; popup stays open |
+
+**Friction.** `uia_select(fwid, name='Part Design', ctype='listitem')` on an open
+FreeCAD workbench dropdown → returns True, item is highlighted in blue — but the
+dropdown stays open, the combo text remains "Start", and the workbench doesn't
+switch.
+
+**Root cause.** AT-SPI `atspi_selection_select_child(parent, idx)` is the equivalent
+of Windows UIA `SelectionItemPattern.Select` — both only *navigate* the highlight
+inside the popup list.  Committing a combo selection requires closing the popup,
+which is a UI gesture (click or Enter key), not a selection-model operation.
+
+**Honest resolution (documentation, not code).**  This is not a bug in the floor —
+it's an honest boundary of what `uia_select` means:
+- `uia_select` = move highlight within a container (listbox, sidebar, tab bar)
+- `uia_click` = click the item's screen rect → closes popup → commits selection
+
+**Proof.** On FreeCAD:
+- `uia_click(fwid, name='Start', ctype='combobox')` → dropdown opens
+- `uia_click(fwid, name='Sketcher', ctype='listitem')` → True; combo reads
+  "Sketcher", workbench switched, dropdown dismissed
+- vs `uia_select(fwid, name='Part Design', ctype='listitem')` → True but combo
+  still shows "Start" (highlighted only, not committed)
+
+---
+
+### F219 — `uia_find` / `_find_acc` return first DFS match even without screen rect
+
+| date | 2026-06-29 |
+|---|---|
+| surface | GIMP Filters menu click fails; uia_menu('Help','About') fails |
+| root cause | label/text shadows share a name with the operable control in DFS order; label has rect=None |
+
+**Friction.** `uia_click(gimp, name='Filters')` returns False despite a `Menu`
+element named "Filters" existing at rect `(568,129,52,27)`.  `uia_find(gimp,
+name='Help', ctype='menuitem')` returns `{rect: None}` — the first DFS hit is a
+non-renderable MenuItem (hidden in a submenu tree), while the visible menubar
+entry is type `Menu` with a valid rect.
+
+**Root cause.** `_impl_uia_find` and `_find_acc` both returned the first DFS
+match regardless of whether `_acc_rect` returned None.  When a same-name label
+or hidden item appears before the operable control in DFS order, every caller
+(`uia_menu`, `uia_context`, `uia_click`) fails because there's no rect to click.
+
+**Fix (three parts).**
+1. `_impl_uia_find`: DFS continues after a rect-less match; returns the first
+   match with a valid rect, falling back to first-any.
+2. `_find_acc`: same logic, using `g_object_ref` to hold the fallback accessible
+   across the walk (prevents use-after-free when the DFS unrefs children).
+3. `uia_menu`: tries `ctype="menu"` after `"menuitem"` for the top-level menubar
+   entry — GTK/GIMP exposes them as `Menu`, Qt/KDE as `MenuItem`.
+
+**Proof.** After fix: `uia_click(gimp, name='Filters')` → True; `uia_menu(gimp,
+'Help', 'About')` → True.  Regression: Calculator, KWrite, Inkscape, LO Calc
+all still work (5×9=45 via `uia_click`, `uia_menu('File','Save As...')` on KWrite).
+
+---
+
 > 為學者日益，聞道者日損。 We add primitives only by subtracting frictions.
