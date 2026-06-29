@@ -7182,4 +7182,31 @@ all still work (5×9=45 via `uia_click`, `uia_menu('File','Save As...')` on KWri
 
 ---
 
+### F220 — Ellipsis mismatch: `_match` rejects "Preferences..." vs "Preferences"
+
+| date | 2026-06-29 |
+|---|---|
+| surface | Inkscape `uia_menu('Edit', 'Preferences...')` fails — item named "Preferences" |
+| root cause | `_match` substring check: "preferences..." ∉ "preferences" |
+
+**Friction.** The user (or AI) naturally writes `"Preferences..."` because the
+menu label shows an ellipsis.  But the AT-SPI accessible name is `"Preferences"`
+(no dots).  Since `"preferences..."` is *not* a substring of `"preferences"`,
+`_match` rejects it.  The reverse works (`"Preferences"` ∈ `"Preferences..."`)
+but is fragile and unintuitive.
+
+**Fix.** `_strip_ellipsis(s)` strips trailing `...` / `…` (U+2026) and whitespace;
+`_match` tries the exact/substring test first, then falls back to
+stripped-vs-stripped.  Bidirectional: `"Preferences..."` ↔ `"Preferences"`.
+
+**Also:** `uia_menu` now retries with `uia_invoke` when the rect-click on a
+menubar entry fails to produce visible submenu items — wxWidgets menus (Audacity)
+need the AT-SPI Action interface to open.
+
+**Proof.** After fix: Inkscape `uia_menu('Edit','Preferences...')` → True (was
+False). VLC `uia_menu('Media','Open File')` → True (matches "Open File...").
+KWrite `uia_menu('File','Open')` → True (matches "Open..."). 8/8 tests pass.
+
+---
+
 > 為學者日益，聞道者日損。 We add primitives only by subtracting frictions.
