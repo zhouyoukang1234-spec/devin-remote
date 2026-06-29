@@ -7119,4 +7119,45 @@ backend for all core semantic operations.
 
 ---
 
+### F218 — ComboBox `uia_select` highlights but doesn't commit
+
+| date | 2026-06-29 |
+|---|---|
+| surface | FreeCAD workbench ComboBox (Qt), also reproduced on Audacity (wx) |
+| root cause | AT-SPI Selection.selectChild moves highlight; popup stays open |
+
+**Friction.** `uia_select(fwid, name='Part Design', ctype='listitem')` on an open
+FreeCAD workbench dropdown → returns True, item is highlighted in blue — but the
+dropdown stays open, the combo text remains "Start", and the workbench doesn't
+switch.  This is exactly the Windows combo-commit issue (deferred from previous
+session's F4/Alt+Down investigation): Selection only highlights, it doesn't dismiss
+the popup or commit the value.
+
+**Root cause.** AT-SPI `atspi_selection_select_child(parent, idx)` is the equivalent
+of Windows UIA `SelectionItemPattern.Select` — both only *navigate* the highlight
+inside the popup list.  Committing a combo selection requires closing the popup,
+which is a UI gesture (click or Enter key), not a selection-model operation.
+
+**Honest resolution (documentation, not code).**  This is not a bug in the floor —
+it's an honest boundary of what `uia_select` means:
+
+- `uia_select` = move highlight within a container (listbox, sidebar, tab bar)
+- `uia_click` = click the item's screen rect → closes popup → commits selection
+
+For ComboBox workflow, the correct sequence is:
+1. `uia_click(win, ctype='combobox')` — open the dropdown
+2. `uia_click(win, name='Sketcher', ctype='listitem')` — click item → commits
+
+**Proof.** On FreeCAD:
+- `uia_click(fwid, name='Start', ctype='combobox')` → dropdown opens
+- `uia_click(fwid, name='Sketcher', ctype='listitem')` → True; combo reads
+  "Sketcher", workbench switched, dropdown dismissed
+- vs `uia_select(fwid, name='Part Design', ctype='listitem')` → True but combo
+  still shows "Start" (highlighted only, not committed)
+
+This is cross-platform consistent: Windows UIA `SelectionItemPattern.Select` has
+the same highlight-only behaviour on ComboBox popups.
+
+---
+
 > 為學者日益，聞道者日損。 We add primitives only by subtracting frictions.
