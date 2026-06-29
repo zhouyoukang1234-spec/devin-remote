@@ -1467,6 +1467,9 @@ def _strip_ellipsis(s):
     return s
 
 
+_EDIT_ALIASES = frozenset({"edit", "textbox", "entry"})
+
+
 def _match(at, acc, name, ctype):
     if name is not None:
         nm = _acc_name(at, acc).lower()
@@ -1478,11 +1481,21 @@ def _match(at, acc, name, ctype):
             if qn2 != nm2 and qn2 not in nm2:
                 return False
     if ctype is not None:
-        want = ctype.lower()
-        want = _ROLE_ALIAS.get(want, want)
+        want_raw = ctype.lower()
+        want = _ROLE_ALIAS.get(want_raw, want_raw)
         rl = _acc_role(at, acc).lower()
         if want != rl and want not in rl:
             return False
+        # F221: "edit"/"textbox"/"entry" all alias to AT-SPI "text", but so do
+        # static labels.  When the caller asked for an *editable* field, require
+        # STATE_EDITABLE to avoid matching read-only text labels.
+        if want_raw in _EDIT_ALIASES and rl == "text":
+            ss = at.atspi_accessible_get_state_set(acc)
+            if ss:
+                editable = at.atspi_state_set_contains(ss, _ATSPI_STATE_EDITABLE)
+                _unref(ss)
+                if not editable:
+                    return False
     return True
 
 
@@ -1880,6 +1893,7 @@ def _impl_uia_click(win: int, name=None, ctype=None) -> bool:
 # AT-SPI state constants
 _ATSPI_STATE_CHECKED = 4
 _ATSPI_STATE_COLLAPSED = 5
+_ATSPI_STATE_EDITABLE = 8
 _ATSPI_STATE_EXPANDED = 10
 _ATSPI_STATE_FOCUSED = 12
 _ATSPI_STATE_INDETERMINATE = 16
