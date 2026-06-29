@@ -1456,11 +1456,27 @@ def _atspi_frame_for(at, win):
     return best
 
 
+def _strip_ellipsis(s):
+    """Strip trailing '...', '…' (U+2026), and whitespace so that
+    'Preferences...' matches 'Preferences' and vice versa (F220)."""
+    s = s.rstrip()
+    if s.endswith('...'):
+        s = s[:-3].rstrip()
+    elif s.endswith('\u2026'):
+        s = s[:-1].rstrip()
+    return s
+
+
 def _match(at, acc, name, ctype):
     if name is not None:
         nm = _acc_name(at, acc).lower()
-        if name.lower() != nm and name.lower() not in nm:
-            return False
+        qn = name.lower()
+        # F220: also compare with trailing ellipsis stripped
+        if qn != nm and qn not in nm:
+            qn2 = _strip_ellipsis(qn)
+            nm2 = _strip_ellipsis(nm)
+            if qn2 != nm2 and qn2 not in nm2:
+                return False
     if ctype is not None:
         want = ctype.lower()
         want = _ROLE_ALIAS.get(want, want)
