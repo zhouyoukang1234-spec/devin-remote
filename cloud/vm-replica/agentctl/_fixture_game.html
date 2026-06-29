@@ -1,0 +1,56 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>DAO_CATCH</title>
+<style>html,body{margin:0;padding:0;background:#ffffff;overflow:hidden}
+#c{display:block;margin:0;background:#ffffff}</style></head>
+<body>
+<canvas id="c" width="860" height="380"></canvas>
+<script>
+// Pure-canvas real-time game: NO DOM controls, NO a11y. The only way to play is
+// to SEE the pixels (red ball, blue paddle) and PRESS arrow keys in real time.
+// Deterministic-ish: ball x is drawn from a fixed LCG so runs are reproducible.
+const cv = document.getElementById('c'), g = cv.getContext('2d');
+const W = cv.width, H = cv.height;
+const PADW = 130, PADH = 22, PADY = H - 36;
+let padx = (W - PADW) / 2;
+let left = false, right = false;
+let ballx = 0, bally = 0, vy = 1.8, live = false;
+let score = 0, miss = 0, rounds = 0;
+let seed = 1234567;
+function rnd(){ seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed / 0x7fffffff; }
+function newBall(){ ballx = 40 + rnd() * (W - 80); bally = 30; live = true; rounds++; }
+addEventListener('keydown', e => { if(e.key==='ArrowLeft')left=true; if(e.key==='ArrowRight')right=true; });
+addEventListener('keyup',   e => { if(e.key==='ArrowLeft')left=false; if(e.key==='ArrowRight')right=false; });
+const PADSPEED = 7;
+function step(){
+  if(left)  padx -= PADSPEED;
+  if(right) padx += PADSPEED;
+  padx = Math.max(0, Math.min(W - PADW, padx));
+  if(live){
+    bally += vy;
+    if(bally >= PADY - 12){
+      const c = ballx;
+      if(c >= padx && c <= padx + PADW){ score++; flash='#00aa00'; }
+      else { miss++; flash='#cc0000'; }
+      flashT = 12; live = false; setTimeout(newBall, 250);
+    }
+  }
+  draw();
+  requestAnimationFrame(step);
+}
+let flash = '#ffffff', flashT = 0;
+function draw(){
+  g.fillStyle = '#ffffff'; g.fillRect(0,0,W,H);
+  // score bar (top), readable both by OCR and by find-color
+  g.fillStyle = '#222'; g.font = '20px monospace';
+  g.fillText('SCORE '+score+'   MISS '+miss+'   ROUND '+rounds, 16, 24);
+  if(flashT>0){ g.fillStyle = flash; g.globalAlpha=0.18; g.fillRect(0,0,W,H); g.globalAlpha=1; flashT--; }
+  // paddle (pure blue)
+  g.fillStyle = '#0000ff'; g.fillRect(padx, PADY, PADW, PADH);
+  // ball (pure red)
+  if(live){ g.fillStyle = '#ff0000'; g.beginPath(); g.arc(ballx, bally, 13, 0, 7); g.fill(); }
+  // expose state for VERIFICATION ONLY (the floor must still PLAY via pixels+keys)
+  window.__game = {score, miss, rounds, padx, ballx, bally, live, W, H, PADW, PADY};
+}
+newBall(); requestAnimationFrame(step);
+</script>
+</body></html>

@@ -1376,6 +1376,40 @@ def find_color(target: tuple[int, int, int], tol: int = 24,
             "bbox": (minx, miny, maxx, maxy)}
 
 
+def find_colors(targets, tol: int = 24, step: int = 1,
+                rgb: bytes | None = None,
+                size: tuple[int, int] | None = None) -> list[dict | None]:
+    """Locate several colours from **one** capture (F209).
+
+    A perceive→act loop — a game, a moving target, any real-time surface with no
+    a11y — must read several things each frame (here: the ball *and* the paddle).
+    Calling :func:`find_color` once per thing grabs the whole screen once per
+    thing: N× the cost, and — worse — each lookup sees a *different instant*, so
+    positions meant to be read together come out skewed in time (the ball moves
+    between the two grabs). This grabs the frame **once** and locates every target
+    within that single, self-consistent frame, returning a list aligned to
+    ``targets`` (each ``{x, y, count, bbox}`` or ``None``). A target may be
+    ``(r, g, b)`` or ``(r, g, b, tol)`` to override ``tol`` for that one colour.
+    Pass an existing ``rgb``/``size`` to share the frame with other reads.
+
+    一陰一陽：many reads, one look — not a new gesture, just the same seeing
+    made whole (cf. F205 ``screen_observe``)."""
+    if rgb is None:
+        w, h, rgb = capture_rgb()
+    else:
+        if size is None:
+            raise ValueError("size required when rgb is provided")
+        w, h = size
+    out: list[dict | None] = []
+    for t in targets:
+        if len(t) == 4:
+            col, tl = (t[0], t[1], t[2]), t[3]
+        else:
+            col, tl = t, tol
+        out.append(find_color(col, tol=tl, rgb=rgb, size=(w, h), step=step))
+    return out
+
+
 def find_color_blobs(target: tuple[int, int, int], tol: int = 24,
                      rgb: bytes | None = None,
                      size: tuple[int, int] | None = None,

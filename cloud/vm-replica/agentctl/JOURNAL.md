@@ -6916,6 +6916,45 @@ asked for*.
 
 ---
 
+## F209 — `find_colors`: many locates from **one** capture (a perceive→act loop's frame)
+
+**Friction (forward practice, games domain).** Driving a real-time HTML5 **canvas** catch-game — a
+pure-pixel surface with *zero* accessibility (the only handles are a red ball and a blue paddle drawn on
+a `<canvas>`; `uia_find` sees nothing) — the floor played it beautifully through `find_color` +
+`key_down`/`key_up`: steer the paddle under the falling ball, score climbed 0→14 over 33 rounds on pixels
+and arrow keys alone. But the perceive→act loop ran at only **8.3 Hz**, because each turn must read **two**
+things — the ball *and* the paddle — and the obvious code calls `find_color` once per thing, which grabs
+the **whole screen once per thing**. Two GDI captures per frame is not just 2× the cost; it is *wrong*:
+the ball is read from one capture and the paddle from another ~60 ms later, so two positions meant to be
+compared *in the same instant* are skewed in time — for a fast target the loop chases a ghost.
+
+**Mechanism — capture once, locate many, from a single self-consistent frame.** The floor already had the
+parts (`capture_rgb` grabs one frame; `find_color`/`find_color_blobs` accept a shared `rgb`/`size`), but the
+*convenient* path re-grabbed, and `capture_rgb` returns `(w, h, bytes)` while the locators want
+`rgb=bytes` + `size=(w, h)` — a producer/consumer mismatch easy to get wrong (it was, twice, while writing
+this). `find_colors(targets, …)` closes it: one `capture_rgb`, then every target located within that one
+frame, returning a list aligned to `targets` (each `{x,y,count,bbox}` or `None`; a target may be
+`(r,g,b)` or `(r,g,b,tol)`). No new gesture, no new OS binding — the same seeing made whole (cf. F205
+`screen_observe`).
+
+**Live (this VM).** `_probe_findcolors.py` **7/7**: targets located from one synthetic frame aligned to
+input order, an absent colour yields `None` in its own slot (list not shifted), results **identical** to
+individual `find_color` on the same frame, the `(r,g,b,tol)` per-target form works, and one `find_colors`
+over K targets beats K separate grabs. Re-run on the **real game**: swapping the loop's two `find_color`
+calls for one `find_colors` lifted it from 8.3 Hz to **11.2 Hz** with the same control code, ball+paddle now
+read from one frame, catching 10/16. Full regression green (`_probe_console` 4/4, `_probe_setvalue` 5/5,
+`_probe_observe` 6/6, `_probe_focus` 5/5, `_probe_opaque` 7/7, `_probe_clipfiles` 7/7, `_probe_clipimage`
+6/6, `_probe_waitctl` 5/5, `_probe_tray` 8/8, `_probe_vdesk` 8/8, `_probe_winverbs` 15/15, `_probe_uiatext`
+green once the game window was closed — a canvas reads `\ufffc` via TextPattern, the F208/contamination
+lesson again: clean up fixtures). Pure stdlib.
+
+**Lesson (道法自然).** 瞽者善聽，聾者善視；絕利一源，用師十倍 — concentrate the perception at its one source.
+The fix was not a faster grab or a new sense but **one look instead of many**: reads that belong to the same
+moment must come from the same frame, or they describe a world that never existed. 一陰一陽之謂道 — the
+ball and the paddle are two readings of a single glance.
+
+---
+
 ## Frontier (next honest rounds)
 
 These are *not yet built* — they are the next real surfaces to push into. Each
