@@ -7209,4 +7209,27 @@ KWrite `uia_menu('File','Open')` → True (matches "Open..."). 8/8 tests pass.
 
 ---
 
+### F221 — `ctype='edit'` matches text *labels*, not editable fields
+
+| date | 2026-06-29 |
+|---|---|
+| surface | KDE file dialog `uia_find(name='File name:', ctype='edit')` returns the static label |
+| root cause | `_ROLE_ALIAS` maps `"edit"→"text"`, AT-SPI uses role `"text"` for BOTH labels AND input fields |
+
+**Friction.** In the KDE Open dialog, "File name:" appears twice in the AT-SPI
+tree: once as a label (not editable, rect 491,693) and once as the actual input
+field (editable, rect 574,693).  Both have role="text".  `uia_find(ctype='edit')`
+hit the label first in DFS → click/paste went to a non-editable widget.
+
+**Fix.** When the caller asked for `ctype` ∈ `{edit, textbox, entry}` and the
+element's AT-SPI role is "text", additionally check `STATE_EDITABLE` (state
+constant 8).  Non-editable "text" nodes are rejected → the actual input field
+is returned.
+
+**Also proven.** Full file-dialog chain: `uia_menu('File','Open')` → dialog
+opens → `uia_set_value(dlg, '/tmp/test_open_file.txt', name='File name:', ctype='edit')`
+→ Enter → KWrite loads file with correct content.  9/9 regression pass.
+
+---
+
 > 為學者日益，聞道者日損。 We add primitives only by subtracting frictions.
