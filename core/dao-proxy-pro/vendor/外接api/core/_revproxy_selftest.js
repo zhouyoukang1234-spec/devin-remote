@@ -435,6 +435,49 @@ let KEY = "";
     ok("quota 信号正则命中 exhausted", /quota|exhaust|precondition/i.test((parsedErr.code || "") + " " + (parsedErr.message || "")));
   }
 
+  console.log("[12b] 官方直通预热帧·越重启常驻(落盘+复现 round-trip)");
+  {
+    const SRC = require("../../bundled-origin/source.js")._test;
+    const { _persistChatFrame, _restoreChatFrame, _setLastChatFrame, _getLastChatFrame } = SRC;
+    const wf = path.join(tmpHome, "_warmframe_test.json");
+    try { fs.unlinkSync(wf); } catch (_) {}
+    // 造一帧真形捕获帧(body 含非 ASCII·校验 base64 逐字节保形)
+    const frame = {
+      body: Buffer.from("PROTO\x00\x01\x02帧体道法自然" + "z".repeat(64), "utf8"),
+      url: "/exa.api_server_pb.ApiServerService/GetChatMessage",
+      method: "POST",
+      headers: { authorization: "Bearer real-cascade-jwt", "content-type": "application/connect+proto" },
+      at: Date.now(),
+    };
+    // 落盘
+    _persistChatFrame(frame, wf);
+    ok("落盘: 预热帧写出文件", fs.existsSync(wf));
+    // 模拟重启: 内存置空
+    _setLastChatFrame(null);
+    ok("重启模拟: 内存帧已空(未复现前)", _getLastChatFrame() === null);
+    // 自盘复现
+    const r = _restoreChatFrame(wf);
+    ok("复现: 内存空→自盘恢复非空", !!(r && r.body && r.body.length));
+    ok("复现: body 逐字节保形(base64 无损)", r && r.body.equals(frame.body));
+    ok("复现: 鉴权头沿用原帧(auth 复用)", r && r.headers && r.headers.authorization === "Bearer real-cascade-jwt");
+    ok("复现: url/method 保持", r && r.url === frame.url && r.method === "POST");
+    ok("复现: 标记 restored=true", r && r.restored === true);
+    // 已有内存帧时不覆盖(优先内存·幂等)
+    const memFrame = { body: Buffer.from("MEM"), url: "/x", method: "POST", headers: {}, at: 1 };
+    _setLastChatFrame(memFrame);
+    ok("内存有帧→复现直返内存帧不读盘", _restoreChatFrame(wf) === memFrame);
+    // 坏盘/空盘: 不崩·返回 null
+    _setLastChatFrame(null);
+    fs.writeFileSync(wf, "{ this is not json");
+    ok("坏盘 JSON→不崩返回 null", _restoreChatFrame(wf) === null && _getLastChatFrame() === null);
+    try { fs.unlinkSync(wf); } catch (_) {}
+    ok("无盘文件→复现返回 null 不崩", _restoreChatFrame(wf) === null);
+    // 空 body 帧不落盘(避免写出无效缓存)
+    _persistChatFrame({ body: Buffer.alloc(0), url: "/x", headers: {} }, wf);
+    ok("空 body 帧不落盘", !fs.existsSync(wf));
+    _setLastChatFrame(null); // 复位·不污染后续用例
+  }
+
   console.log("[13] 档位热切换: 家族归组 + 默认择档 + 别名解析 + 热切生效");
   {
     const tierCat = [

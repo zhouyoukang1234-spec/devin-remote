@@ -2,6 +2,20 @@
 
 > 完整版本历史。详情页（README）保持精简，本文件单列于扩展的 Changelog 标签页。
 
+v9.9.327 · 官方直通预热帧·越重启常驻(反者道之动 · 一次预热永久自举)
+: 旧病灶——官方直通复用的真 GetChatMessage 捕获帧仅存内存(`_lastChatFrame`),插件每次
+重载/重启即丢,官方直通恒需在 Cascade 内重新预热一次(否则 `/origin/revproxy/warm` 恒
+`has:false`、外接反代官方档 502)。此为 `/v1` 本源在「供所有环境使用」上的最后一处断点。
+- `bundled-origin/source.js` 新增 `_persistChatFrame`/`_restoreChatFrame`: 捕获即把帧
+  序列化落盘(`__dirname/_warmframe.json`,body base64 逐字节保形),复用前若内存空则自盘
+  复现 → **一次预热永久常驻、跨重启不失**;复现帧沿用原帧鉴权头,若 auth 过期则官方上游
+  回 4xx,与「未预热」同款干净回退,决不更坏。
+- `_officialChatReplay`、`hasChatFrame`、`/origin/revproxy/warm` 三处入口均先 `_restoreChatFrame()`;
+  `/warm` 增回 `restored`/`persisted`/`age_s` 便于面板/自检观测常驻态。
+- 坏盘/空盘/空 body 帧全部安全短路(不崩、不写无效缓存)。
+- 自检 [12b] 新增: 落盘+复现 round-trip(body 逐字节保形·auth 头复用·内存优先幂等·坏盘
+  不崩·空 body 不落盘),revproxy 自检全过。
+
 v9.9.326 · ④ 模型反代档位热切换(朴散则为器 · 家族归组 + 档位热切 + 别名直调)
 : 把 Devin Desktop 的「选档」底层逻辑迁入 ④ 模型反代——同族多档(none/low/medium/high/xhigh/max,
 +thinking/+fast)按**家族归组**呈现,行内一个**档位下拉**可热切该族「当前活跃档」,热生效无需重启。

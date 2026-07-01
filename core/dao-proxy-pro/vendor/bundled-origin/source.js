@@ -6360,6 +6360,48 @@ function _signalPremiumQuota(state) {
 //   反者道之动·闭环自举: 捕最近一帧真 GetChatMessage 请求, 换入新 user turn 后
 //   真转云端官方推理链, 解码回包文本。免费档(swe-1-6 等)即便付费配额耗尽仍可出包。
 let _lastChatFrame = null; // { body:Buffer, url, method, headers, at }
+const _WARMFRAME_FILE = path.join(__dirname, "_warmframe.json");
+// 反者道之动·令预热帧越重启常驻: 捕获即落盘, 内存空时自磁盘复现。
+//   旧病灶: _lastChatFrame 仅在内存 → 插件每次重载/重启即丢, 官方直通恒需重新预热(has:false·502)。
+//   正法: 捕获帧序列化落盘(body base64), 复用前若内存空则自盘复现 → 一次预热永久常驻、跨重启不失。
+//   复现帧沿用原帧鉴权头; 若其 auth 已过期, 官方上游回 4xx → 与「未预热」同款干净回退, 决不更坏。
+function _persistChatFrame(f, file) {
+  try {
+    if (!f || !f.body || !f.body.length) return;
+    fs.writeFileSync(
+      file || _WARMFRAME_FILE,
+      JSON.stringify({
+        body: Buffer.from(f.body).toString("base64"),
+        url: f.url,
+        method: f.method || "POST",
+        headers: f.headers || {},
+        at: f.at || Date.now(),
+      }),
+    );
+  } catch (_) {}
+}
+function _restoreChatFrame(file) {
+  if (_lastChatFrame && _lastChatFrame.body) return _lastChatFrame;
+  try {
+    const p = file || _WARMFRAME_FILE;
+    if (!fs.existsSync(p)) return null;
+    const j = JSON.parse(fs.readFileSync(p, "utf8"));
+    if (!j || !j.body) return null;
+    const body = Buffer.from(j.body, "base64");
+    if (!body.length) return null;
+    _lastChatFrame = {
+      body,
+      url: j.url,
+      method: j.method || "POST",
+      headers: j.headers || {},
+      at: j.at || 0,
+      restored: true,
+    };
+    return _lastChatFrame;
+  } catch (_) {
+    return null;
+  }
+}
 function _captureChatFrame(req, body) {
   const hdr = {};
   try {
@@ -6373,6 +6415,7 @@ function _captureChatFrame(req, body) {
     headers: hdr,
     at: Date.now(),
   };
+  _persistChatFrame(_lastChatFrame);
 }
 
 // 取捕获帧最末一条消息正文 → 换成 newText → 返回新 Connect 帧 Buffer。
@@ -6488,6 +6531,7 @@ function _trimFrameHistory(frameBody) {
 // 官方直通: revproxy 经此真转云端、解码回包。sink: {onText,onEnd,onError}。
 function _officialChatReplay(target, norm, sink) {
   return new Promise((resolve) => {
+    _restoreChatFrame(); // 内存空则自磁盘复现上次预热帧 (越重启常驻)
     if (!_lastChatFrame || !_lastChatFrame.body) {
       sink.onError &&
         sink.onError(
@@ -6679,7 +6723,7 @@ function _revproxyDeps() {
     },
     officialChat: (target, norm, sink) =>
       _officialChatReplay(target, norm, sink),
-    hasChatFrame: () => !!(_lastChatFrame && _lastChatFrame.body),
+    hasChatFrame: () => !!(_restoreChatFrame() && _lastChatFrame.body),
     resolveRoute: (uid) => {
       try {
         const r = _ea ? _ea.getRouter() : null;
@@ -6718,8 +6762,13 @@ async function _maybeRevproxy(req, res) {
   }
   // 诊断: 当前预热帧所携模型(官方直通实际将路由之档) · 只读 · 供面板/自检显预热档
   if (u.pathname === "/origin/revproxy/warm" && req.method === "GET") {
+    _restoreChatFrame(); // 内存空则自磁盘复现 (跨重启常驻诊断如实反映)
     const has = !!(_lastChatFrame && _lastChatFrame.body);
     const frame = has ? _frameModelInfo(_lastChatFrame.body) : null;
+    let persisted = false;
+    try {
+      persisted = fs.existsSync(_WARMFRAME_FILE);
+    } catch (_) {}
     res.setHeader("Content-Type", "application/json");
     res.end(
       JSON.stringify({
@@ -6727,6 +6776,12 @@ async function _maybeRevproxy(req, res) {
         has,
         warm: frame,
         at: (_lastChatFrame && _lastChatFrame.at) || 0,
+        restored: !!(_lastChatFrame && _lastChatFrame.restored),
+        persisted,
+        age_s:
+          _lastChatFrame && _lastChatFrame.at
+            ? Math.round((Date.now() - _lastChatFrame.at) / 1000)
+            : null,
       }),
     );
     return true;
@@ -7590,5 +7645,11 @@ module.exports = {
     _msgContentInfo,
     parseFrames,
     parseProto,
+    _persistChatFrame,
+    _restoreChatFrame,
+    _setLastChatFrame: (v) => {
+      _lastChatFrame = v;
+    },
+    _getLastChatFrame: () => _lastChatFrame,
   },
 };
